@@ -6,6 +6,7 @@ import {
   Navigate,
   Outlet,
   useLocation,
+  useNavigate,
 } from "react-router-dom";
 
 import LoginPage from "./pages/LoginPage";
@@ -43,6 +44,54 @@ import ContactFormsPage from "./pages/ContactFormsPage";
 
 import { isAuthed } from "./utils/auth";
 
+/**
+ * ✅ 전역 뒤로가기 버튼 (MainLayout 없이 App.jsx에서 한 번만 적용)
+ * - 로그인(/), 대시보드(/dashboard)에서는 숨김
+ * - 그 외 모든 페이지에서는 좌상단 고정 표시
+ * - PWA 첫 진입 등 history가 없으면 /dashboard로 fallback
+ */
+function GlobalBackButton() {
+  const nav = useNavigate();
+  const { pathname } = useLocation();
+
+  const HIDE_PATHS = ["/", "/dashboard"];
+  if (HIDE_PATHS.includes(pathname)) return null;
+
+  function goBack() {
+    if (window.history.length > 1) nav(-1);
+    else nav("/dashboard", { replace: true });
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={goBack}
+      aria-label="뒤로가기"
+      title="뒤로가기"
+      style={{
+        position: "fixed",
+        zIndex: 999999,
+        left: 12,
+        top: "calc(env(safe-area-inset-top, 0px) + 10px)",
+        height: 36,
+        minWidth: 36,
+        padding: "0 12px",
+        borderRadius: 999,
+        border: "1px solid rgba(0,0,0,0.12)",
+        background: "rgba(255,255,255,0.92)",
+        color: "#1f2a44",
+        fontWeight: 800,
+        cursor: "pointer",
+        boxShadow: "0 8px 20px rgba(0,0,0,0.08)",
+        backdropFilter: "blur(6px)",
+        WebkitBackdropFilter: "blur(6px)",
+      }}
+    >
+      ←
+    </button>
+  );
+}
+
 function RequireAuth() {
   const loc = useLocation();
   if (!isAuthed())
@@ -53,6 +102,9 @@ function RequireAuth() {
 export default function App() {
   return (
     <BrowserRouter>
+      {/* ✅ 전역 뒤로가기 버튼: 라우트 전환과 무관하게 항상 동작 */}
+      <GlobalBackButton />
+
       <Routes>
         {/* 공개 */}
         <Route path="/" element={<LoginPage />} />
