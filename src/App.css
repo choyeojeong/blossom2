@@ -1,0 +1,9 @@
+/* src/App.css */
+/* ✅ Vite 기본 데모(.logo/.card/animation 등) 제거하고, 앱 레이아웃만 남김 */
+
+#root {
+  width: 100%;
+  min-height: 100%;
+  margin: 0;
+  padding: 0;
+}

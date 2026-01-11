@@ -1,0 +1,58 @@
+/* src/index.css */
+
+/* ===== 기본 리셋 & 화면 꽉 채우기 ===== */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+/* ===== 전역 폰트/색상(라이트 기준) ===== */
+:root {
+  font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+
+  color: #1f2a44;            /* ✅ 기본 글씨색 (어둡게) */
+  background-color: #ffffff; /* ✅ 기본 배경 (라이트) */
+
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ✅ body에 flex 중앙정렬 강제했던 것 제거 */
+body {
+  min-width: 320px;
+  min-height: 100vh;
+}
+
+/* 링크 기본 */
+a {
+  font-weight: 500;
+  color: #2f6fed;
+  text-decoration: none;
+}
+a:hover {
+  text-decoration: underline;
+}
+
+/* 제목 기본 (필요하면 페이지에서 개별 스타일로 덮어씀) */
+h1 {
+  margin: 0;
+}
+
+/* 버튼 기본값: 너무 어두운 기본 버튼 제거(페이지에서 덮어써도 됨) */
+button {
+  font-family: inherit;
+}
