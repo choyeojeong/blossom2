@@ -199,6 +199,7 @@ export default function OneToOneSchedulePage() {
     setErr("");
     try {
       // ✅ 선생님별 필터: students!inner + eq(students.teacher_name, teacherName)
+      // ✅ schedule_kind='oto' 만 조회 (일대일 시간표에 속한 이벤트만)
       const { data, error } = await supabase
         .from("student_events")
         .select(
@@ -220,6 +221,7 @@ export default function OneToOneSchedulePage() {
           makeup_event_id,
           event_kind,
           memo,
+          schedule_kind,
           students:students!inner (
             id,
             name,
@@ -231,7 +233,7 @@ export default function OneToOneSchedulePage() {
         )
         .eq("event_date", selectedDate)
         .eq("students.teacher_name", teacherName)
-        .or(["kind.eq.oto_class", "kind.eq.oto_test", "and(kind.eq.extra,event_kind.eq.makeup)"].join(","))
+        .eq("schedule_kind", "oto")
         .order("start_time", { ascending: true });
 
       if (error) throw error;
@@ -433,6 +435,9 @@ export default function OneToOneSchedulePage() {
           absent_reason: null,
           makeup_date: null,
           makeup_class_time: null,
+
+          // ✅ 핵심: 일대일 시간표 귀속
+          schedule_kind: "oto",
         };
 
         if (existingMakeupId) {
@@ -683,6 +688,9 @@ export default function OneToOneSchedulePage() {
         absent_reason: null,
         makeup_date: null,
         makeup_class_time: null,
+
+        // ✅ 핵심: 일대일 시간표 귀속
+        schedule_kind: "oto",
       };
 
       const { error } = await supabase.from("student_events").insert(payload);

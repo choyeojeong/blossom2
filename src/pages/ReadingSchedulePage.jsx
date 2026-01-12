@@ -148,6 +148,7 @@ export default function ReadingSchedulePage() {
       setErr("");
       setLoading(true);
 
+      // ✅ schedule_kind='reading' 만 조회 (독해 시간표에 속한 이벤트만)
       const { data, error } = await supabase
         .from("student_events")
         .select(
@@ -169,6 +170,7 @@ export default function ReadingSchedulePage() {
           makeup_event_id,
           event_kind,
           memo,
+          schedule_kind,
           student:students (
             id,
             name,
@@ -179,17 +181,11 @@ export default function ReadingSchedulePage() {
         `
         )
         .eq("event_date", date)
-        .in("kind", ["reading", "extra"]);
+        .eq("schedule_kind", "reading");
 
       if (error) throw error;
 
-      const filtered = (data || []).filter((r) => {
-        if (r.kind === "reading") return true;
-        if (r.kind === "extra" && (r.event_kind || "") === "makeup") return true;
-        return false;
-      });
-
-      const normalized = filtered.map((r) => ({
+      const normalized = (data || []).map((r) => ({
         ...r,
         student_name: (r.student?.name || "").trim(),
         school: (r.student?.school || "").trim(),
@@ -313,6 +309,9 @@ export default function ReadingSchedulePage() {
           original_event_id: r.id,
           event_kind: "makeup",
           makeup_class_time: mct,
+
+          // ✅ 핵심: 독해 시간표 귀속
+          schedule_kind: "reading",
         };
 
         const { data: insData, error: insErr } = await supabase
@@ -536,6 +535,9 @@ export default function ReadingSchedulePage() {
         class_minutes: 60,
         original_event_id: null, // ✅ 원결석 없이도 생성
         makeup_class_time: t,
+
+        // ✅ 핵심: 독해 시간표 귀속
+        schedule_kind: "reading",
       };
 
       const { error } = await supabase.from("student_events").insert(payload);
@@ -713,12 +715,7 @@ export default function ReadingSchedulePage() {
           <div style={styles.addGrid}>
             <div>
               <div style={styles.label}>학생이름</div>
-              <input
-                value={addName}
-                onChange={(e) => setAddName(e.target.value)}
-                placeholder="예: 김민준"
-                style={styles.input}
-              />
+              <input value={addName} onChange={(e) => setAddName(e.target.value)} placeholder="예: 김민준" style={styles.input} />
             </div>
 
             <div>
@@ -762,9 +759,7 @@ export default function ReadingSchedulePage() {
         >
           <div onMouseDown={(e) => e.stopPropagation()} style={styles.modal}>
             <div style={styles.modalHead}>
-              <div style={{ fontSize: 16, fontWeight: 900, color: COLORS.text }}>
-                결석 처리: {target?.student_name || "-"}
-              </div>
+              <div style={{ fontSize: 16, fontWeight: 900, color: COLORS.text }}>결석 처리: {target?.student_name || "-"}</div>
               <button
                 type="button"
                 onClick={() => {
