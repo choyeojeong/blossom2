@@ -198,8 +198,7 @@ export default function OneToOneSchedulePage() {
     setLoading(true);
     setErr("");
     try {
-      // ✅ 선생님별 필터: students!inner + eq(students.teacher_name, teacherName)
-      // ✅ schedule_kind='oto' 만 조회 (일대일 시간표에 속한 이벤트만)
+      // ✅ 선생님별 필터 + ✅ 일대일 화면에서는 oto + oto_test + (makeup extra 중 schedule_kind='oto')만 보여야 함
       const { data, error } = await supabase
         .from("student_events")
         .select(
@@ -210,6 +209,7 @@ export default function OneToOneSchedulePage() {
           kind,
           start_time,
           season,
+          schedule_kind,
           attendance_status,
           attended_at,
           late_minutes,
@@ -221,7 +221,6 @@ export default function OneToOneSchedulePage() {
           makeup_event_id,
           event_kind,
           memo,
-          schedule_kind,
           students:students!inner (
             id,
             name,
@@ -233,7 +232,14 @@ export default function OneToOneSchedulePage() {
         )
         .eq("event_date", selectedDate)
         .eq("students.teacher_name", teacherName)
-        .eq("schedule_kind", "oto")
+        .or(
+          [
+            "kind.eq.oto_class",
+            "kind.eq.oto_test",
+            // ✅ 보강은 schedule_kind='oto'만 (섞임 방지)
+            "and(kind.eq.extra,event_kind.eq.makeup,schedule_kind.eq.oto)",
+          ].join(",")
+        )
         .order("start_time", { ascending: true });
 
       if (error) throw error;
@@ -427,6 +433,7 @@ export default function OneToOneSchedulePage() {
           start_time: `${makeupClassTime}:00`,
           season: e.season,
           event_kind: "makeup",
+          schedule_kind: "oto", // ✅ 강제
           original_event_id: e.id,
           makeup_time: makeupTestTime,
           attendance_status: null,
@@ -435,9 +442,6 @@ export default function OneToOneSchedulePage() {
           absent_reason: null,
           makeup_date: null,
           makeup_class_time: null,
-
-          // ✅ 핵심: 일대일 시간표 귀속
-          schedule_kind: "oto",
         };
 
         if (existingMakeupId) {
@@ -634,7 +638,7 @@ export default function OneToOneSchedulePage() {
     }
   }
 
-  // ✅ 수동 보강 추가
+  // ✅ 수동 보강 추가 (일대일 화면이므로 schedule_kind='oto' 강제)
   async function addManualMakeup() {
     setErr("");
     const name = String(manualMakeup.studentName || "").trim();
@@ -680,6 +684,7 @@ export default function OneToOneSchedulePage() {
         start_time: `${makeupClassTime}:00`,
         season: seasonForDate(makeupDate),
         event_kind: "makeup",
+        schedule_kind: "oto", // ✅ 강제 (핵심)
         original_event_id: null, // ✅ 결석과 무관한 수동 보강
         makeup_time: makeupTestTime, // ✅ 보강 출석 기준(테스트 시간)
         attendance_status: null,
@@ -688,9 +693,6 @@ export default function OneToOneSchedulePage() {
         absent_reason: null,
         makeup_date: null,
         makeup_class_time: null,
-
-        // ✅ 핵심: 일대일 시간표 귀속
-        schedule_kind: "oto",
       };
 
       const { error } = await supabase.from("student_events").insert(payload);
@@ -1123,6 +1125,7 @@ export default function OneToOneSchedulePage() {
             </b>
             <br />· 원수업(oto_class) 초기화 → 연결된 보강도 함께 삭제됨
             <br />· 삭제 버튼 → 해당 날짜의 해당 이벤트 1개만 삭제됨
+            <br />· 수동 보강/자동 보강 모두 <b>schedule_kind='oto'</b>로 강제 저장됨 (독해 시간표와 섞임 방지)
           </div>
 
           {/* ✅ 수동 보강 추가 폼 */}
@@ -1130,6 +1133,8 @@ export default function OneToOneSchedulePage() {
             <div style={{ fontSize: 16, fontWeight: 1000, letterSpacing: -0.2 }}>수동 보강 추가</div>
             <div style={{ marginTop: 6, color: COLORS.sub, fontSize: 12, lineHeight: 1.45 }}>
               결석이 없어도 보강(추가 수업)을 직접 등록할 수 있어요. (표에는 <b>보강일</b>에 들어가면 노란색으로 표시됩니다)
+              <br />
+              • 이 화면에서 추가한 보강은 자동으로 <b>일대일(oto)</b> 보강으로 저장돼요.
             </div>
 
             <div style={{ marginTop: 10, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>

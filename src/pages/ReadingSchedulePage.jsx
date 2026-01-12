@@ -148,7 +148,7 @@ export default function ReadingSchedulePage() {
       setErr("");
       setLoading(true);
 
-      // ✅ schedule_kind='reading' 만 조회 (독해 시간표에 속한 이벤트만)
+      // ✅ 독해 화면에서는 reading + (makeup extra 중 schedule_kind='reading')만 보여야 함
       const { data, error } = await supabase
         .from("student_events")
         .select(
@@ -159,6 +159,7 @@ export default function ReadingSchedulePage() {
           kind,
           start_time,
           season,
+          schedule_kind,
           attendance_status,
           attended_at,
           late_minutes,
@@ -170,7 +171,6 @@ export default function ReadingSchedulePage() {
           makeup_event_id,
           event_kind,
           memo,
-          schedule_kind,
           student:students (
             id,
             name,
@@ -181,11 +181,22 @@ export default function ReadingSchedulePage() {
         `
         )
         .eq("event_date", date)
-        .eq("schedule_kind", "reading");
+        .or(
+          [
+            "kind.eq.reading",
+            "and(kind.eq.extra,event_kind.eq.makeup,schedule_kind.eq.reading)",
+          ].join(",")
+        );
 
       if (error) throw error;
 
-      const normalized = (data || []).map((r) => ({
+      const filtered = (data || []).filter((r) => {
+        if (r.kind === "reading") return true;
+        if (r.kind === "extra" && (r.event_kind || "") === "makeup" && (r.schedule_kind || "") === "reading") return true;
+        return false;
+      });
+
+      const normalized = filtered.map((r) => ({
         ...r,
         student_name: (r.student?.name || "").trim(),
         school: (r.student?.school || "").trim(),
@@ -301,6 +312,7 @@ export default function ReadingSchedulePage() {
           kind: "extra",
           start_time: `${mct}:00`,
           season: r.season,
+          schedule_kind: "reading", // ✅ 강제
           attendance_status: null,
           attended_at: null,
           late_minutes: null,
@@ -309,9 +321,6 @@ export default function ReadingSchedulePage() {
           original_event_id: r.id,
           event_kind: "makeup",
           makeup_class_time: mct,
-
-          // ✅ 핵심: 독해 시간표 귀속
-          schedule_kind: "reading",
         };
 
         const { data: insData, error: insErr } = await supabase
@@ -413,7 +422,6 @@ export default function ReadingSchedulePage() {
     if (status === "present") {
       const win = presentWindow(r.attended_at);
 
-      // ✅ 수정: 0분은 "정시 출석", null/undefined면 "지각분 미기록"으로 표시(데이터 문제 숨기지 않기)
       const hasLate = r.late_minutes !== null && r.late_minutes !== undefined;
       const lateNum = hasLate ? Number(r.late_minutes) : null;
 
@@ -430,7 +438,7 @@ export default function ReadingSchedulePage() {
       );
     }
 
-    // ✅ 결석: 두 줄(첫줄 결석/사유, 둘째줄 보강)
+    // ✅ 결석
     if (status === "absent") {
       const line1 = r.absent_reason ? `결석 (${r.absent_reason})` : "결석";
       const line2 =
@@ -486,13 +494,12 @@ export default function ReadingSchedulePage() {
       if (error) throw error;
       if (!data || data.length === 0) return { id: null, pickedName: "" };
 
-      // 가장 “짧은 이름(=가까운)” 우선
       const sorted = [...data].sort((a, b) => (a.name || "").length - (b.name || "").length);
       return { id: sorted[0].id, pickedName: sorted[0].name };
     }
   }
 
-  // ✅ 하단 보강 추가 저장
+  // ✅ 하단 보강 추가 저장 (독해 화면이므로 schedule_kind='reading' 강제)
   async function addMakeupDirect() {
     const nm = (addName || "").trim();
     const d = (addDate || "").trim();
@@ -526,6 +533,7 @@ export default function ReadingSchedulePage() {
         event_date: d,
         kind: "extra",
         event_kind: "makeup",
+        schedule_kind: "reading", // ✅ 강제 (핵심)
         start_time: `${t}:00`,
         season: seasonForDate(d),
         attendance_status: null,
@@ -535,19 +543,14 @@ export default function ReadingSchedulePage() {
         class_minutes: 60,
         original_event_id: null, // ✅ 원결석 없이도 생성
         makeup_class_time: t,
-
-        // ✅ 핵심: 독해 시간표 귀속
-        schedule_kind: "reading",
       };
 
       const { error } = await supabase.from("student_events").insert(payload);
       if (error) throw error;
 
-      // ✅ 방금 추가한 날짜로 이동해서 바로 확인
       setAddName("");
       setAddTime("");
       setDate(d);
-      // date 변경으로 load() 자동 실행됨
     } catch (e) {
       setErr(e?.message || String(e));
     } finally {
@@ -712,10 +715,19 @@ export default function ReadingSchedulePage() {
         {/* ✅ 하단: 보강 추가 폼 */}
         <div style={styles.addBox}>
           <div style={styles.addTitle}>보강 추가</div>
+          <div style={{ marginTop: 6, color: COLORS.sub, fontSize: 12, lineHeight: 1.45, fontWeight: 800 }}>
+            • 이 화면에서 추가한 보강은 자동으로 <b>독해(reading)</b> 보강으로 저장돼요. (일대일 시간표에 섞이지 않음)
+          </div>
+
           <div style={styles.addGrid}>
             <div>
               <div style={styles.label}>학생이름</div>
-              <input value={addName} onChange={(e) => setAddName(e.target.value)} placeholder="예: 김민준" style={styles.input} />
+              <input
+                value={addName}
+                onChange={(e) => setAddName(e.target.value)}
+                placeholder="예: 김민준"
+                style={styles.input}
+              />
             </div>
 
             <div>
@@ -759,7 +771,9 @@ export default function ReadingSchedulePage() {
         >
           <div onMouseDown={(e) => e.stopPropagation()} style={styles.modal}>
             <div style={styles.modalHead}>
-              <div style={{ fontSize: 16, fontWeight: 900, color: COLORS.text }}>결석 처리: {target?.student_name || "-"}</div>
+              <div style={{ fontSize: 16, fontWeight: 900, color: COLORS.text }}>
+                결석 처리: {target?.student_name || "-"}
+              </div>
               <button
                 type="button"
                 onClick={() => {
