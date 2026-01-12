@@ -82,6 +82,10 @@ function hhmmFromISO(ts) {
   const d = new Date(ts);
   return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
 }
+function seasonForDate(iso) {
+  const isWinter = isoInRange(iso, WINTER_FROM, WINTER_TO);
+  return isWinter ? "winter" : "term";
+}
 
 function rowBg(r) {
   if (r?.attendance_status === "present") return COLORS.blueSoft;
@@ -94,16 +98,16 @@ function buildSummary(r, linkedMakeupClassTime) {
   if (!r) return null;
 
   if (r.attendance_status === "present") {
-    // ✅ 수정: present인데 late_minutes가 null인 경우를 "정시(0)"로 숨기지 않고, 바로 드러나게 표시
     const lateRaw = r.late_minutes;
     const hasLate = lateRaw !== null && lateRaw !== undefined;
 
     const late = hasLate ? Number(lateRaw) : null;
-    const label = !hasLate || !Number.isFinite(late)
-      ? "출석(지각분 미기록)"
-      : late <= 0
-        ? "정시 출석"
-        : `${late}분 지각`;
+    const label =
+      !hasLate || !Number.isFinite(late)
+        ? "출석(지각분 미기록)"
+        : late <= 0
+          ? "정시 출석"
+          : `${late}분 지각`;
 
     const at = r.attended_at ? hhmmFromISO(r.attended_at) : "";
     return { title: "출석", detail: `${label}${at ? ` · 체크 ${at}` : ""}` };
@@ -149,6 +153,16 @@ export default function OneToOneSchedulePage() {
   const [memoDraftBySlotStart, setMemoDraftBySlotStart] = useState({});
   const [memoSavingKey, setMemoSavingKey] = useState(null); // "e:<id>" | "s:<slot>"
 
+  // ✅ 수동 보강 폼
+  const [studentsList, setStudentsList] = useState([]);
+  const [manualMakeup, setManualMakeup] = useState({
+    studentName: "",
+    studentId: "",
+    makeupDate: "",
+    makeupTestTime: "",
+    makeupClassTime: "",
+  });
+
   const fixedSlots = useMemo(() => {
     const isWinter = isoInRange(selectedDate, WINTER_FROM, WINTER_TO);
     return isWinter ? WINTER_SLOTS : TERM_SLOTS;
@@ -157,11 +171,27 @@ export default function OneToOneSchedulePage() {
   const isWinter = isoInRange(selectedDate, WINTER_FROM, WINTER_TO);
   const season = isWinter ? "winter" : "term";
 
-  // ✅ 학생 상세로 이동 (아직 페이지는 없지만 라우트만 맞추면 연결됨)
+  // ✅ 학생 상세로 이동
   function goStudentDetail(studentId) {
     const id = String(studentId || "").trim();
     if (!id) return;
     nav(`/students/${id}`);
+  }
+
+  async function loadStudents() {
+    setErr("");
+    try {
+      const { data, error } = await supabase
+        .from("students")
+        .select("id, name, school, grade, teacher_name")
+        .eq("teacher_name", teacherName)
+        .order("name", { ascending: true });
+
+      if (error) throw error;
+      setStudentsList(data || []);
+    } catch (e) {
+      setErr(e?.message || String(e));
+    }
   }
 
   async function load() {
@@ -239,6 +269,11 @@ export default function OneToOneSchedulePage() {
       setLoading(false);
     }
   }
+
+  useEffect(() => {
+    loadStudents();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [teacherName]);
 
   useEffect(() => {
     load();
@@ -480,6 +515,62 @@ export default function OneToOneSchedulePage() {
     }
   }
 
+  // ✅ (그 날의 그 수업만) 삭제
+  async function deleteOnlyThisEvent(e) {
+    const label = `${selectedDate} ${toHHMM(e.start_time) || ""} ${e.students?.name || ""}`.trim();
+    const ok = window.confirm(`이 수업을 삭제할까요?\n\n${label}\n\n※ 이 날짜 1회만 삭제됩니다.`);
+    if (!ok) return;
+
+    setSavingId(`del:${e.id}`);
+    setErr("");
+    try {
+      // 1) 연결된 링크 정리
+      if (e.kind === "oto_class") {
+        const makeupId = e.makeup_event_id || null;
+        if (makeupId) {
+          // 연결된 보강이 있으면 보강 삭제 + 링크 해제
+          const { error: delMuErr } = await supabase.from("student_events").delete().eq("id", makeupId);
+          if (delMuErr) throw delMuErr;
+        }
+      }
+
+      if (e.kind === "extra" && e.event_kind === "makeup") {
+        // 보강(자체) 삭제라면 원수업 링크 해제
+        if (e.original_event_id) {
+          const { error: unlinkErr } = await supabase.from("student_events").update({ makeup_event_id: null }).eq("id", e.original_event_id);
+          if (unlinkErr) throw unlinkErr;
+        }
+      }
+
+      // 2) 본 이벤트 삭제
+      const { error } = await supabase.from("student_events").delete().eq("id", e.id);
+      if (error) throw error;
+
+      // 3) UI draft 정리(선택)
+      setOpenAbsent((prev) => {
+        const n = { ...prev };
+        delete n[e.id];
+        return n;
+      });
+      setAbsentDrafts((prev) => {
+        const n = { ...prev };
+        delete n[e.id];
+        return n;
+      });
+      setMemoDraftByEventId((prev) => {
+        const n = { ...prev };
+        delete n[e.id];
+        return n;
+      });
+
+      await load();
+    } catch (er) {
+      setErr(er?.message || String(er));
+    } finally {
+      setSavingId(null);
+    }
+  }
+
   async function saveEventMemo(eventId) {
     const key = `e:${eventId}`;
     setMemoSavingKey(key);
@@ -535,6 +626,82 @@ export default function OneToOneSchedulePage() {
       setErr(e?.message || String(e));
     } finally {
       setMemoSavingKey(null);
+    }
+  }
+
+  // ✅ 수동 보강 추가
+  async function addManualMakeup() {
+    setErr("");
+    const name = String(manualMakeup.studentName || "").trim();
+    const sid = String(manualMakeup.studentId || "").trim();
+    const makeupDate = String(manualMakeup.makeupDate || "").trim();
+    const makeupTestTime = normalizeHHMM(manualMakeup.makeupTestTime);
+    const makeupClassTime = normalizeHHMM(manualMakeup.makeupClassTime);
+
+    if (!name && !sid) {
+      setErr("수동 보강: 학생 이름을 입력(또는 선택)해주세요.");
+      return;
+    }
+    if (!makeupDate) {
+      setErr("수동 보강: 보강일을 선택해주세요.");
+      return;
+    }
+    if (!makeupTestTime || !/^\d{2}:\d{2}$/.test(makeupTestTime)) {
+      setErr("수동 보강: 보강 테스트시간을 HH:MM 형식으로 입력해주세요. (예: 15:50)");
+      return;
+    }
+    if (!makeupClassTime || !/^\d{2}:\d{2}$/.test(makeupClassTime)) {
+      setErr("수동 보강: 보강 수업시간을 HH:MM 형식으로 입력해주세요. (예: 16:00)");
+      return;
+    }
+
+    // 이름으로만 입력했을 때 id 매칭(동명이인 가능성은 있지만 현재 UX 우선)
+    let studentId = sid;
+    if (!studentId && name) {
+      const found = (studentsList || []).find((s) => String(s.name || "").trim() === name);
+      studentId = found?.id || "";
+    }
+    if (!studentId) {
+      setErr("수동 보강: 학생을 찾지 못했습니다. 목록에서 선택하거나 정확한 이름으로 입력해주세요.");
+      return;
+    }
+
+    setSavingId("manualMakeup");
+    try {
+      const payload = {
+        student_id: studentId,
+        event_date: makeupDate,
+        kind: "extra",
+        start_time: `${makeupClassTime}:00`,
+        season: seasonForDate(makeupDate),
+        event_kind: "makeup",
+        original_event_id: null, // ✅ 결석과 무관한 수동 보강
+        makeup_time: makeupTestTime, // ✅ 보강 출석 기준(테스트 시간)
+        attendance_status: null,
+        attended_at: null,
+        late_minutes: null,
+        absent_reason: null,
+        makeup_date: null,
+        makeup_class_time: null,
+      };
+
+      const { error } = await supabase.from("student_events").insert(payload);
+      if (error) throw error;
+
+      setManualMakeup({
+        studentName: "",
+        studentId: "",
+        makeupDate: "",
+        makeupTestTime: "",
+        makeupClassTime: "",
+      });
+
+      // 보강이 다른 날짜일 수 있으니: 현재 날짜면 reload 해서 바로 보이게
+      if (makeupDate === selectedDate) await load();
+    } catch (e) {
+      setErr(e?.message || String(e));
+    } finally {
+      setSavingId(null);
     }
   }
 
@@ -615,6 +782,17 @@ export default function OneToOneSchedulePage() {
     font: "inherit",
   };
 
+  const formInputStyle = {
+    height: 36,
+    padding: "0 10px",
+    borderRadius: 12,
+    border: `1px solid ${COLORS.line}`,
+    background: COLORS.white,
+    fontWeight: 900,
+    color: COLORS.text,
+    outline: "none",
+  };
+
   return (
     <div style={container}>
       <div style={wrap}>
@@ -675,6 +853,7 @@ export default function OneToOneSchedulePage() {
                 <th style={{ ...thStyle, width: 90 }}>학년</th>
                 <th style={{ ...thStyle, width: 360 }}>출결</th>
                 <th style={{ ...thStyle, width: 90 }}>초기화</th>
+                <th style={{ ...thStyle, width: 90 }}>삭제</th>
                 <th style={{ ...thStyle, width: 260 }}>메모</th>
               </tr>
             </thead>
@@ -682,7 +861,7 @@ export default function OneToOneSchedulePage() {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={7} style={{ ...tdStyle, padding: "14px 10px", color: COLORS.sub, textAlign: "center" }}>
+                  <td colSpan={8} style={{ ...tdStyle, padding: "14px 10px", color: COLORS.sub, textAlign: "center" }}>
                     불러오는 중…
                   </td>
                 </tr>
@@ -700,6 +879,7 @@ export default function OneToOneSchedulePage() {
                         <td style={{ ...tdStyle, color: COLORS.sub, textAlign: "center" }}>-</td>
                         <td style={{ ...tdStyle, color: COLORS.sub, textAlign: "center" }}>-</td>
                         <td style={{ ...tdStyle, color: COLORS.sub, textAlign: "center" }}>-</td>
+                        <td style={{ ...tdStyle, color: COLORS.sub }} />
                         <td style={{ ...tdStyle, color: COLORS.sub }} />
                         <td style={{ ...tdStyle, color: COLORS.sub }} />
                         <td style={tdStyle}>
@@ -735,6 +915,8 @@ export default function OneToOneSchedulePage() {
 
                     const memoVal = memoDraftByEventId[e.id] ?? (e.memo || "");
                     const memoSaving = memoSavingKey === `e:${e.id}`;
+
+                    const deleting = savingId === `del:${e.id}`;
 
                     return (
                       <tr key={e.id} style={{ background: bg }}>
@@ -896,6 +1078,12 @@ export default function OneToOneSchedulePage() {
                           </button>
                         </td>
 
+                        <td style={{ ...tdStyle, textAlign: "center" }}>
+                          <button type="button" style={btnDanger} onClick={() => deleteOnlyThisEvent(e)} disabled={deleting}>
+                            삭제
+                          </button>
+                        </td>
+
                         <td style={tdStyle}>
                           <textarea
                             value={memoVal}
@@ -926,6 +1114,83 @@ export default function OneToOneSchedulePage() {
               {WINTER_FROM} ~ {WINTER_TO}
             </b>
             <br />· 원수업(oto_class) 초기화 → 연결된 보강도 함께 삭제됨
+            <br />· 삭제 버튼 → 해당 날짜의 해당 이벤트 1개만 삭제됨
+          </div>
+
+          {/* ✅ 수동 보강 추가 폼 */}
+          <div style={{ marginTop: 18, paddingTop: 14, borderTop: `1px solid ${COLORS.lineSoft}` }}>
+            <div style={{ fontSize: 16, fontWeight: 1000, letterSpacing: -0.2 }}>수동 보강 추가</div>
+            <div style={{ marginTop: 6, color: COLORS.sub, fontSize: 12, lineHeight: 1.45 }}>
+              결석이 없어도 보강(추가 수업)을 직접 등록할 수 있어요. (표에는 <b>보강일</b>에 들어가면 노란색으로 표시됩니다)
+            </div>
+
+            <div style={{ marginTop: 10, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                <div style={{ fontSize: 12, color: COLORS.sub, fontWeight: 900 }}>학생 이름</div>
+
+                <input
+                  list="oto-students-datalist"
+                  value={manualMakeup.studentName}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    // datalist로 선택하면 name만 들어오므로 id를 같이 추적
+                    const found = (studentsList || []).find((s) => String(s.name || "").trim() === String(v || "").trim());
+                    setManualMakeup((prev) => ({
+                      ...prev,
+                      studentName: v,
+                      studentId: found?.id || prev.studentId || "",
+                    }));
+                  }}
+                  placeholder="학생 이름 입력/선택"
+                  style={{ ...formInputStyle, width: 220 }}
+                />
+                <datalist id="oto-students-datalist">
+                  {(studentsList || []).map((s) => (
+                    <option key={s.id} value={s.name}>
+                      {s.school || ""} {s.grade || ""}
+                    </option>
+                  ))}
+                </datalist>
+              </div>
+
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                <div style={{ fontSize: 12, color: COLORS.sub, fontWeight: 900 }}>보강일</div>
+                <input
+                  type="date"
+                  value={manualMakeup.makeupDate}
+                  onChange={(e) => setManualMakeup((prev) => ({ ...prev, makeupDate: e.target.value }))}
+                  style={{ ...formInputStyle, width: 160 }}
+                />
+              </div>
+
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                <div style={{ fontSize: 12, color: COLORS.sub, fontWeight: 900 }}>보강 테스트시간(HH:MM)</div>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  placeholder="예: 15:50"
+                  value={manualMakeup.makeupTestTime}
+                  onChange={(e) => setManualMakeup((prev) => ({ ...prev, makeupTestTime: e.target.value }))}
+                  style={{ ...formInputStyle, width: 170 }}
+                />
+              </div>
+
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                <div style={{ fontSize: 12, color: COLORS.sub, fontWeight: 900 }}>보강 수업시간(HH:MM)</div>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  placeholder="예: 16:00"
+                  value={manualMakeup.makeupClassTime}
+                  onChange={(e) => setManualMakeup((prev) => ({ ...prev, makeupClassTime: e.target.value }))}
+                  style={{ ...formInputStyle, width: 170 }}
+                />
+              </div>
+
+              <button type="button" style={btnPrimary} onClick={addManualMakeup} disabled={savingId === "manualMakeup"}>
+                보강 추가
+              </button>
+            </div>
           </div>
         </div>
       </div>
