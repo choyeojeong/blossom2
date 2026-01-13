@@ -205,13 +205,11 @@ export default function StudentDetailPage() {
   const [eventsByDate, setEventsByDate] = useState({});
 
   // ===== 강의 선택 =====
-  // ✅ 과정명 드롭다운용: lecture_courses 목록 로드
   const [courseOptions, setCourseOptions] = useState([]); // [{id,name}]
   const [coursesLoading, setCoursesLoading] = useState(false);
 
-  // 드롭다운에서 선택된 과정 (id + name)
   const [courseId, setCourseId] = useState("");
-  const [courseKey, setCourseKey] = useState(""); // (기존 로직 호환) name 저장
+  const [courseKey, setCourseKey] = useState(""); // name 저장
   const [lectureInput, setLectureInput] = useState("");
   const [selectedLectureGroups, setSelectedLectureGroups] = useState([]);
   const [lastAddedText, setLastAddedText] = useState("");
@@ -271,7 +269,12 @@ export default function StudentDetailPage() {
     if (k === "oto" || k === "oto_class" || k === "one_to_one") return "일대일";
     if (k === "reading") return "독해";
     if (k === "extra" || k === "extra_attendance" || k === "extra_class") return "추가";
+
+    // ✅ 보강 세부 표시
+    if (k === "makeup_oto") return "일대일보강";
+    if (k === "makeup_reading") return "독해보강";
     if (k === "makeup") return "보강";
+
     return null;
   }
 
@@ -292,6 +295,25 @@ export default function StudentDetailPage() {
     if (t.includes("attend")) return "attended";
     if (t.includes("absent")) return "absent";
     if (t === "present" || t === "late") return "attended";
+    return null;
+  }
+
+  // ✅ 보강이 "일대일보강/독해보강"인지 추론
+  function normalizeMakeupType(row, originalKindById) {
+    const ek = String(row?.event_kind || "").toLowerCase();
+
+    // 1) event_kind 힌트 우선
+    if (ek.includes("oto") || ek.includes("one") || ek.includes("1:1") || ek.includes("one_to_one")) return "oto";
+    if (ek.includes("read")) return "reading";
+
+    // 2) original_event_id로 원본 kind 조회
+    const oid = row?.original_event_id;
+    if (oid && originalKindById && originalKindById[oid]) {
+      const ok = String(originalKindById[oid] || "").toLowerCase();
+      if (ok === "reading") return "reading";
+      if (ok === "oto" || ok === "oto_class" || ok === "one_to_one") return "oto";
+    }
+
     return null;
   }
 
@@ -350,9 +372,26 @@ export default function StudentDetailPage() {
 
       const { data: extra } = await supabase.from("student_extra_rules").select("weekday, kind").eq("student_id", studentId);
 
+      // ✅ (수정) 추가등원 kind 표기 차이(extra / extra_attendance / extra_class 등) + weekday 0-based 방어
       const extraWeekdays = (extra || [])
-        .filter((r) => String(r.kind || "").toLowerCase() === "extra")
-        .map((r) => Number(r.weekday))
+        .filter((r) => {
+          const k = String(r?.kind || "").toLowerCase().trim();
+          return k === "extra" || k === "extra_attendance" || k === "extra_class";
+        })
+        .map((r) => {
+          let n = Number(r?.weekday);
+
+          // weekday가 문자열/빈값이면 skip
+          if (!Number.isFinite(n)) return null;
+
+          // 방어: 0~5(월~토)로 저장된 경우 → 1~6으로 변환
+          // 이미 1~6이면 그대로
+          if (n >= 1 && n <= 6) return n;
+          if (n >= 0 && n <= 5) return n + 1;
+
+          // 그 외 값은 버림
+          return null;
+        })
         .filter((n) => Number.isFinite(n) && n >= 1 && n <= 6);
 
       setStudent({ ...stu, __extraWeekdays: extraWeekdays });
@@ -403,18 +442,47 @@ export default function StudentDetailPage() {
 
     if (error) return;
 
+    // ✅ 보강의 원본 종류(일대일/독해)를 알기 위해 original_event_id들을 추가 조회
+    const originalIds = Array.from(
+      new Set(
+        (data || [])
+          .filter((r) => String(r?.kind || "").toLowerCase() === "makeup" || String(r?.event_kind || "").toLowerCase() === "makeup")
+          .map((r) => r?.original_event_id)
+          .filter(Boolean)
+      )
+    );
+
+    let originalKindById = {};
+    if (originalIds.length) {
+      const { data: origRows, error: origErr } = await supabase.from("student_events").select("id, kind").in("id", originalIds);
+      if (!origErr) {
+        originalKindById = {};
+        for (const r of origRows || []) {
+          if (r?.id) originalKindById[r.id] = r.kind;
+        }
+      }
+    }
+
     const map = {};
     for (const r of data || []) {
       const d = r.event_date;
       if (!d) continue;
 
-      if (!map[d]) map[d] = { kinds: new Set(), makeup: [], normal: [] };
+      if (!map[d]) map[d] = { normalKinds: new Set(), makeupTypes: new Set(), makeup: [], normal: [] };
 
       const k = normalizeKind(r);
-      map[d].kinds.add(k);
 
-      if (k === "makeup") map[d].makeup.push(r);
-      else map[d].normal.push(r);
+      if (k === "makeup") {
+        map[d].makeup.push(r);
+
+        const mt = normalizeMakeupType(r, originalKindById);
+        if (mt === "oto") map[d].makeupTypes.add("makeup_oto");
+        else if (mt === "reading") map[d].makeupTypes.add("makeup_reading");
+        else map[d].makeupTypes.add("makeup"); // fallback
+      } else {
+        map[d].normal.push(r);
+        map[d].normalKinds.add(k);
+      }
     }
 
     const out = {};
@@ -433,7 +501,13 @@ export default function StudentDetailPage() {
         else if (normalStatuses.includes("attended")) status = "attended";
       }
 
-      out[d] = { kinds: bucket.kinds, status };
+      // ✅ 달력 칩용 kind 집합 구성:
+      // - 정상 수업 kind + (보강이면 makeup_oto / makeup_reading 등)
+      const kinds = new Set();
+      for (const nk of bucket.normalKinds || []) kinds.add(nk);
+      for (const mk of bucket.makeupTypes || []) kinds.add(mk);
+
+      out[d] = { kinds, status };
     }
 
     setEventsByDate(out);
@@ -556,6 +630,20 @@ export default function StudentDetailPage() {
     }
   }
 
+  // ✅ (수정) upsert(INSERT ON CONFLICT)로 order_index만 보내면 NOT NULL(student_id) 제약에 걸릴 수 있어서
+  //          order_index 재정렬은 "각 row update"로 안전하게 처리
+  async function persistOrderIndexUpdates(patched) {
+    // patched: [{id, order_index}, ...]
+    // NOTE: 최소 변경을 위해 RPC/트랜잭션 대신 Promise.all 업데이트 사용
+    const jobs = (patched || [])
+      .filter((x) => x?.id)
+      .map((x) => supabase.from("student_todos").update({ order_index: x.order_index }).eq("id", x.id));
+
+    const results = await Promise.all(jobs);
+    const firstErr = results.find((r) => r?.error)?.error;
+    if (firstErr) throw firstErr;
+  }
+
   async function reorderWithinDate(dateIso, movingId, beforeId) {
     const arr = [...(todosByDate[dateIso] || [])];
     const fromIdx = arr.findIndex((x) => x.id === movingId);
@@ -573,9 +661,8 @@ export default function StudentDetailPage() {
 
     setErr("");
     try {
-      const updates = patched.map((x) => ({ id: x.id, order_index: x.order_index }));
-      const { error } = await supabase.from("student_todos").upsert(updates, { onConflict: "id" });
-      if (error) throw error;
+      // ✅ (수정) upsert 제거 → update로만 저장
+      await persistOrderIndexUpdates(patched.map((x) => ({ id: x.id, order_index: x.order_index })));
     } catch (e) {
       setErr(e?.message || String(e));
     }
@@ -604,9 +691,10 @@ export default function StudentDetailPage() {
     setErr("");
     try {
       const fromPatched = fromArr.map((x, i) => ({ id: x.id, order_index: i }));
+
+      // ✅ (수정) upsert 제거 → update로만 저장
       if (fromPatched.length) {
-        const { error: up1 } = await supabase.from("student_todos").upsert(fromPatched, { onConflict: "id" });
-        if (up1) throw up1;
+        await persistOrderIndexUpdates(fromPatched);
       }
 
       const { error: up2 } = await supabase.from("student_todos").update({ todo_date: toDate, order_index: nextIndex }).eq("id", todoId);
@@ -689,13 +777,11 @@ export default function StudentDetailPage() {
 
     setErr("");
     try {
-      // ✅ 드롭다운에서 선택된 과정이면, 선택된 id/name을 그대로 사용
       let course = null;
 
       if (courseId) {
         course = { id: courseId, name: ck };
       } else {
-        // (혹시라도 courseId가 비어있을 때를 위한 기존 fallback)
         const { data: c1, error: c1err } = await supabase.from("lecture_courses").select("id, name").eq("name", ck).maybeSingle();
         if (c1err) throw c1err;
         course = c1 || null;
@@ -940,7 +1026,6 @@ export default function StudentDetailPage() {
     WebkitLineClamp: 2,
   };
 
-  // ✅ 입력 중에도 굵기 과하지 않게
   const inputWeight = 700;
 
   const tinyInput = {
@@ -1216,7 +1301,7 @@ export default function StudentDetailPage() {
         <div style={sectionTitle}>강의 링크 선택</div>
 
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
-          {/* ✅ 과정: 드롭다운 */}
+          {/* 과정: 드롭다운 */}
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
             <div style={{ fontSize: 12, color: COLORS.sub, fontWeight: 1000 }}>과정</div>
 
@@ -1340,7 +1425,7 @@ export default function StudentDetailPage() {
           </div>
         ) : null}
 
-        {/* ✅ 자동 메시지 */}
+        {/* 자동 메시지 */}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
           <div style={sectionTitle}>자동 메시지</div>
 

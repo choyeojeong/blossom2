@@ -67,12 +67,10 @@ function kindLabel(e) {
     if (sk === "reading") return "독해보강";
 
     // fallback: 수동/구버전 데이터는 schedule_kind가 비어있을 수 있음
-    // 이런 경우엔 original_event_id가 있으면 그 원결석 kind로 판별 가능 (단, 여기 함수는 단일 row만 받으므로 raw에 original_kind를 붙여서 넘겨줌)
     const ok = String(e.__original_kind || "").toLowerCase().trim();
     if (ok === "oto_class") return "일대일보강";
     if (ok === "reading") return "독해보강";
 
-    // 마지막 fallback
     return "보강";
   }
 
@@ -136,6 +134,10 @@ export default function AttendanceStatusPage() {
   const [events, setEvents] = useState([]); // month + linked rows
   const [collapsedByDate, setCollapsedByDate] = useState({}); // iso -> boolean (true면 접힘)
 
+  // ✅ 추가등원 출결 입력용(이 화면에서만)
+  const [absentDraftById, setAbsentDraftById] = useState({}); // { [eventId]: string }
+  const [savingById, setSavingById] = useState({}); // { [eventId]: boolean }
+
   const monthStart = useMemo(() => toISODate(firstDayOfMonth(monthCursor)), [monthCursor]);
   const monthEnd = useMemo(() => toISODate(lastDayOfMonth(monthCursor)), [monthCursor]);
   const monthTitle = useMemo(() => `${monthCursor.getFullYear()}년 ${monthCursor.getMonth() + 1}월`, [monthCursor]);
@@ -145,8 +147,6 @@ export default function AttendanceStatusPage() {
     setErr("");
     try {
       // 1) 월 이벤트 로드
-      // - oto_test는 화면엔 안 보이지만 일대일 테스트시간 표시용으로 필요
-      // ✅ schedule_kind 추가 로드 (보강 종류 표시용)
       const { data: base, error } = await supabase
         .from("student_events")
         .select(
@@ -249,6 +249,17 @@ export default function AttendanceStatusPage() {
         return next;
       });
 
+      // ✅ 추가등원 결석사유 draft 초기화(이미 입력돼있으면 그 값)
+      setAbsentDraftById((prev) => {
+        const next = { ...prev };
+        for (const r of all) {
+          const isExtraNormal = r.kind === "extra" && String(r.event_kind || "").toLowerCase() !== "makeup";
+          if (!isExtraNormal) continue;
+          if (next[r.id] === undefined) next[r.id] = (r.absent_reason || "").trim();
+        }
+        return next;
+      });
+
       setEvents(all);
     } catch (e) {
       setErr(e?.message || String(e));
@@ -280,6 +291,88 @@ export default function AttendanceStatusPage() {
     }
     return m;
   }, [events]);
+
+  // ✅ 이 화면에서 "추가등원(보강 제외)"만 출결 처리
+  function isExtraNormal(raw) {
+    return raw?.kind === "extra" && String(raw?.event_kind || "").toLowerCase() !== "makeup";
+  }
+
+  async function markExtraPresent(eventId) {
+    setErr("");
+    if (!eventId) return;
+
+    setSavingById((p) => ({ ...p, [eventId]: true }));
+    try {
+      const nowIso = new Date().toISOString();
+
+      // ✅ 출석: present + attended_at 기록, 결석사유 제거
+      const { error } = await supabase
+        .from("student_events")
+        .update({
+          attendance_status: "present",
+          attended_at: nowIso,
+          late_minutes: null,
+          absent_reason: null,
+        })
+        .eq("id", eventId);
+
+      if (error) throw error;
+
+      // UI 반영
+      setEvents((prev) =>
+        prev.map((r) =>
+          r.id === eventId
+            ? { ...r, attendance_status: "present", attended_at: nowIso, late_minutes: null, absent_reason: null }
+            : r
+        )
+      );
+      setAbsentDraftById((p) => ({ ...p, [eventId]: "" }));
+    } catch (e) {
+      setErr(e?.message || String(e));
+    } finally {
+      setSavingById((p) => ({ ...p, [eventId]: false }));
+    }
+  }
+
+  async function markExtraAbsent(eventId) {
+    setErr("");
+    if (!eventId) return;
+
+    const reason = String(absentDraftById[eventId] || "").trim();
+    if (!reason) {
+      setErr("추가등원 결석 처리 시 결석 사유를 입력해주세요.");
+      return;
+    }
+
+    setSavingById((p) => ({ ...p, [eventId]: true }));
+    try {
+      // ✅ 결석: absent + absent_reason 기록, attended_at 제거
+      const { error } = await supabase
+        .from("student_events")
+        .update({
+          attendance_status: "absent",
+          absent_reason: reason,
+          attended_at: null,
+          late_minutes: null,
+        })
+        .eq("id", eventId);
+
+      if (error) throw error;
+
+      // UI 반영
+      setEvents((prev) =>
+        prev.map((r) =>
+          r.id === eventId
+            ? { ...r, attendance_status: "absent", absent_reason: reason, attended_at: null, late_minutes: null }
+            : r
+        )
+      );
+    } catch (e) {
+      setErr(e?.message || String(e));
+    } finally {
+      setSavingById((p) => ({ ...p, [eventId]: false }));
+    }
+  }
 
   // ✅ 화면에 보여줄 row 만들기
   const visibleRows = useMemo(() => {
@@ -347,6 +440,7 @@ export default function AttendanceStatusPage() {
           st,
           type,
           isMakeup,
+          isExtraNormal: isExtraNormal(r), // ✅ 추가등원(보강 제외) 여부
           startHH,
           testHH,
           status: statusLabel(r),
@@ -462,6 +556,30 @@ export default function AttendanceStatusPage() {
     userSelect: "none",
   };
 
+  const smallBtn = {
+    height: 28,
+    padding: "0 10px",
+    borderRadius: 999,
+    border: `1px solid ${COLORS.line}`,
+    background: "rgba(255,255,255,0.9)",
+    fontWeight: 1000,
+    cursor: "pointer",
+    whiteSpace: "nowrap",
+  };
+  const smallBtnBlue = { ...smallBtn, background: "rgba(90,167,255,0.14)", border: "1px solid rgba(90,167,255,0.55)" };
+  const smallBtnRed = { ...smallBtn, background: "rgba(255,99,99,0.12)", border: "1px solid rgba(255,99,99,0.45)", color: "#b00020" };
+
+  const reasonInput = {
+    width: "100%",
+    height: 32,
+    borderRadius: 12,
+    border: `1px solid ${COLORS.line}`,
+    background: COLORS.white,
+    padding: "0 10px",
+    fontWeight: 900,
+    outline: "none",
+  };
+
   return (
     <div style={container}>
       <div style={wrap}>
@@ -553,9 +671,9 @@ export default function AttendanceStatusPage() {
                               <th style={{ ...thStyle, width: 90 }}>학년</th>
                               <th style={{ ...thStyle, width: 120 }}>담당</th>
                               <th style={{ ...thStyle, width: 110 }}>수업종류</th>
-                              <th style={{ ...thStyle, width: 90 }}>출결</th>
+                              <th style={{ ...thStyle, width: 190 }}>출결</th>
                               <th style={{ ...thStyle, width: 220 }}>정시/지각</th>
-                              <th style={{ ...thStyle, width: 220 }}>결석사유</th>
+                              <th style={{ ...thStyle, width: 260 }}>결석사유</th>
                               <th style={{ ...thStyle, width: 280 }}>보강일정보</th>
                               <th style={{ ...thStyle, width: 280 }}>원결석일정보</th>
                             </tr>
@@ -565,6 +683,10 @@ export default function AttendanceStatusPage() {
                             {rows.map((r) => {
                               const e = r.raw;
                               const bg = rowBg(e);
+
+                              const canCheckExtra = r.isExtraNormal; // ✅ 추가등원(보강 제외)만
+                              const saving = !!savingById[r.id];
+                              const draft = absentDraftById[r.id] ?? "";
 
                               return (
                                 <tr key={r.id} style={{ background: bg }}>
@@ -586,11 +708,55 @@ export default function AttendanceStatusPage() {
 
                                   <td style={{ ...tdStyle, textAlign: "center", fontWeight: 1000 }}>{r.type}</td>
 
-                                  <td style={{ ...tdStyle, textAlign: "center", fontWeight: 1000 }}>{r.status}</td>
+                                  {/* ✅ 출결: 추가등원(보강 제외)만 버튼 노출 */}
+                                  <td style={{ ...tdStyle, textAlign: "center", whiteSpace: "normal" }}>
+                                    {canCheckExtra ? (
+                                      <div style={{ display: "flex", flexDirection: "column", gap: 6, alignItems: "center" }}>
+                                        <div style={{ fontWeight: 1000 }}>{r.status}</div>
+                                        <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap" }}>
+                                          <button
+                                            type="button"
+                                            style={smallBtnBlue}
+                                            disabled={saving}
+                                            onClick={() => markExtraPresent(r.id)}
+                                            title="추가등원 출석 처리"
+                                          >
+                                            출석
+                                          </button>
+                                          <button
+                                            type="button"
+                                            style={smallBtnRed}
+                                            disabled={saving}
+                                            onClick={() => markExtraAbsent(r.id)}
+                                            title="추가등원 결석 처리 (사유 필수)"
+                                          >
+                                            결석
+                                          </button>
+                                        </div>
+                                      </div>
+                                    ) : (
+                                      <div style={{ fontWeight: 1000 }}>{r.status}</div>
+                                    )}
+                                  </td>
 
                                   <td style={{ ...tdStyle, color: r.punctual ? COLORS.text : COLORS.sub, fontWeight: 900 }}>{r.punctual || "-"}</td>
 
-                                  <td style={{ ...tdStyle, color: r.absentReason ? COLORS.text : COLORS.sub, fontWeight: 900 }}>{r.absentReason || "-"}</td>
+                                  {/* ✅ 결석사유: 추가등원(보강 제외)만 입력 가능 */}
+                                  <td style={{ ...tdStyle, whiteSpace: "normal" }}>
+                                    {canCheckExtra ? (
+                                      <input
+                                        value={draft}
+                                        onChange={(ev) => setAbsentDraftById((p) => ({ ...p, [r.id]: ev.target.value }))}
+                                        placeholder="결석 사유 입력"
+                                        style={reasonInput}
+                                        disabled={saving}
+                                      />
+                                    ) : (
+                                      <div style={{ color: r.absentReason ? COLORS.text : COLORS.sub, fontWeight: 900 }}>
+                                        {r.absentReason || "-"}
+                                      </div>
+                                    )}
+                                  </td>
 
                                   <td style={{ ...tdStyle, color: r.makeupInfo ? COLORS.text : COLORS.sub, fontWeight: 900, whiteSpace: "normal" }}>
                                     {r.makeupInfo || "-"}
@@ -607,7 +773,9 @@ export default function AttendanceStatusPage() {
                       </div>
 
                       <div style={{ marginTop: 8, color: COLORS.sub, fontSize: 12, fontWeight: 900 }}>
-                        · 색상: 출석(연파랑) / 결석(연빨강) / 보강 미처리(연노랑) · 보강은 처리 후에도 “보강” 라벨 유지
+                        · 색상: 출석(연파랑) / 결석(연빨강) / 보강 미처리(연노랑)
+                        <br />
+                        · 이 화면에서 출결 버튼은 <b>추가등원(보강 제외)</b>만 가능합니다. (결석은 사유 입력 후 “결석” 클릭)
                       </div>
                     </div>
                   )}

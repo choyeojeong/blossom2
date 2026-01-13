@@ -44,17 +44,6 @@ function hhmm(t) {
   return s;
 }
 
-function toMinutesHHMM(v) {
-  const s = hhmm(v);
-  if (!s) return null;
-  const m = s.match(/^(\d{2}):(\d{2})$/);
-  if (!m) return null;
-  const h = parseInt(m[1], 10);
-  const mm = parseInt(m[2], 10);
-  if (Number.isNaN(h) || Number.isNaN(mm)) return null;
-  return h * 60 + mm;
-}
-
 function clampTimeHHMM(v) {
   const s = (v || "").trim();
   if (!s) return "";
@@ -82,6 +71,40 @@ function presentWindow(attendedAtIso) {
   const a = dayjs(attendedAtIso);
   const b = a.add(90, "minute");
   return `${a.format("HH:mm")}-${b.format("HH:mm")}`;
+}
+
+// ✅ 날짜(YYYY-MM-DD) + 시간(HH:MM) -> 로컬 Date 생성
+function makeLocalDateTime(dateStr, timeStrHHMM) {
+  const d = String(dateStr || "").trim();
+  const t = hhmm(timeStrHHMM);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return null;
+  if (!/^\d{2}:\d{2}$/.test(t)) return null;
+
+  const [Y, M, D] = d.split("-").map((x) => parseInt(x, 10));
+  const [h, m] = t.split(":").map((x) => parseInt(x, 10));
+  if (!Y || !M || !D) return null;
+
+  const dt = new Date(Y, M - 1, D, h || 0, m || 0, 0, 0);
+  return Number.isNaN(dt.getTime()) ? null : dt;
+}
+
+// ✅ attended_at(실제 체크) 기준으로 지각분 계산 (타임존/파싱 안전)
+function calcLateFromAttendedAt(eventDate, startTime, attendedAtIso) {
+  const scheduled = makeLocalDateTime(eventDate, startTime);
+  const attended = attendedAtIso ? new Date(attendedAtIso) : null;
+  if (!scheduled || !attended || Number.isNaN(attended.getTime())) return null;
+
+  const diffMin = Math.floor((attended.getTime() - scheduled.getTime()) / 60000);
+  return Math.max(0, diffMin);
+}
+
+// ✅ “지금 클릭한 순간” 기준으로 지각분 계산 (저장용)
+function calcLateFromNow(eventDate, startTime) {
+  const scheduled = makeLocalDateTime(eventDate, startTime);
+  if (!scheduled) return 0;
+  const now = new Date();
+  const diffMin = Math.floor((now.getTime() - scheduled.getTime()) / 60000);
+  return Math.max(0, diffMin);
 }
 
 // ✅ 보강 추가시 season 자동 추정(현재 프로젝트 규칙)
@@ -207,8 +230,8 @@ export default function ReadingSchedulePage() {
 
       // 시간순 → 같은 시간이면 이름순
       normalized.sort((a, b) => {
-        const ta = toMinutesHHMM(a.start_time) ?? 999999;
-        const tb = toMinutesHHMM(b.start_time) ?? 999999;
+        const ta = makeLocalDateTime(a.event_date, a.start_time)?.getTime() ?? 9e18;
+        const tb = makeLocalDateTime(b.event_date, b.start_time)?.getTime() ?? 9e18;
         if (ta !== tb) return ta - tb;
         return (a.student_name || "").localeCompare(b.student_name || "", "ko");
       });
@@ -239,16 +262,14 @@ export default function ReadingSchedulePage() {
     try {
       setErr("");
 
-      const now = dayjs();
-      const startMin = toMinutesHHMM(r.start_time);
-      const nowMin = now.hour() * 60 + now.minute();
-      const late = startMin === null ? 0 : Math.max(0, nowMin - startMin);
+      // ✅ FIX: 날짜+시간 기준으로 정확히 late 계산
+      const late = calcLateFromNow(r.event_date, r.start_time);
 
       const { error } = await supabase
         .from("student_events")
         .update({
           attendance_status: "present",
-          attended_at: now.toISOString(),
+          attended_at: new Date().toISOString(),
           late_minutes: late,
           absent_reason: null,
         })
@@ -287,7 +308,7 @@ export default function ReadingSchedulePage() {
     try {
       setErr("");
 
-      // ✅ 수정: 결석은 attended_at을 남기지 않음(출석 윈도우 표시 꼬임 방지)
+      // ✅ 결석은 attended_at을 남기지 않음
       const { error: upErr } = await supabase
         .from("student_events")
         .update({
@@ -418,17 +439,24 @@ export default function ReadingSchedulePage() {
   function renderAttendanceCell(r) {
     const status = r.attendance_status || null;
 
-    // ✅ 출석: 한 줄 표시
     if (status === "present") {
       const win = presentWindow(r.attended_at);
 
-      const hasLate = r.late_minutes !== null && r.late_minutes !== undefined;
-      const lateNum = hasLate ? Number(r.late_minutes) : null;
+      // ✅ FIX: DB late_minutes가 0으로 잘못 저장된 케이스도 “attended_at”으로 재계산해서 표시
+      const stored = r.late_minutes;
+      const storedNum = stored === null || stored === undefined ? null : Number(stored);
+      const computed = calcLateFromAttendedAt(r.event_date, r.start_time, r.attended_at);
 
-      let lateText = "";
-      if (!hasLate || !Number.isFinite(lateNum)) lateText = "지각분 미기록";
-      else if (lateNum <= 0) lateText = "정시 출석";
-      else lateText = `지각 ${lateNum}분`;
+      // 표시용 late 결정:
+      // - 저장값이 유효(>0)이면 그걸 사용
+      // - 저장값이 0/없음인데 computed가 1 이상이면 computed 사용
+      // - 그 외는 0 처리
+      let lateForShow = 0;
+      if (Number.isFinite(storedNum) && storedNum > 0) lateForShow = storedNum;
+      else if (Number.isFinite(computed) && computed > 0) lateForShow = computed;
+      else lateForShow = 0;
+
+      const lateText = lateForShow <= 0 ? "정시 출석" : `지각 ${lateForShow}분`;
 
       return (
         <div style={styles.attnBox}>
@@ -438,7 +466,6 @@ export default function ReadingSchedulePage() {
       );
     }
 
-    // ✅ 결석
     if (status === "absent") {
       const line1 = r.absent_reason ? `결석 (${r.absent_reason})` : "결석";
       const line2 =
@@ -453,7 +480,6 @@ export default function ReadingSchedulePage() {
       );
     }
 
-    // ✅ 미체크: 버튼
     return (
       <div style={{ display: "flex", justifyContent: "center", gap: 8 }}>
         <button type="button" onClick={() => markPresent(r)} style={styles.btnPresent}>
@@ -466,40 +492,25 @@ export default function ReadingSchedulePage() {
     );
   }
 
-  // ✅ 학생 이름으로 student_id 찾기(최대한 “그럴듯하게”)
   async function findStudentIdByName(nameRaw) {
     const name = (nameRaw || "").trim();
     if (!name) return { id: null, pickedName: "" };
 
-    // 1) exact match 우선
     {
-      const { data, error } = await supabase
-        .from("students")
-        .select("id,name")
-        .eq("name", name)
-        .limit(1);
-
+      const { data, error } = await supabase.from("students").select("id,name").eq("name", name).limit(1);
       if (error) throw error;
       if (data && data.length) return { id: data[0].id, pickedName: data[0].name };
     }
 
-    // 2) 부분 일치(가장 비슷한 것 1개)
     {
-      const { data, error } = await supabase
-        .from("students")
-        .select("id,name")
-        .ilike("name", `%${name}%`)
-        .limit(5);
-
+      const { data, error } = await supabase.from("students").select("id,name").ilike("name", `%${name}%`).limit(5);
       if (error) throw error;
       if (!data || data.length === 0) return { id: null, pickedName: "" };
-
       const sorted = [...data].sort((a, b) => (a.name || "").length - (b.name || "").length);
       return { id: sorted[0].id, pickedName: sorted[0].name };
     }
   }
 
-  // ✅ 하단 보강 추가 저장 (독해 화면이므로 schedule_kind='reading' 강제)
   async function addMakeupDirect() {
     const nm = (addName || "").trim();
     const d = (addDate || "").trim();
@@ -533,7 +544,7 @@ export default function ReadingSchedulePage() {
         event_date: d,
         kind: "extra",
         event_kind: "makeup",
-        schedule_kind: "reading", // ✅ 강제 (핵심)
+        schedule_kind: "reading",
         start_time: `${t}:00`,
         season: seasonForDate(d),
         attendance_status: null,
@@ -541,7 +552,7 @@ export default function ReadingSchedulePage() {
         late_minutes: null,
         absent_reason: null,
         class_minutes: 60,
-        original_event_id: null, // ✅ 원결석 없이도 생성
+        original_event_id: null,
         makeup_class_time: t,
       };
 
@@ -558,7 +569,6 @@ export default function ReadingSchedulePage() {
     }
   }
 
-  // ✅ 한 줄 삭제(그 날짜의 그 줄만)
   async function deleteRow(r) {
     if (!r?.id) return;
     const ok = window.confirm("이 줄을 삭제할까요? (되돌릴 수 없어요)");
@@ -567,7 +577,6 @@ export default function ReadingSchedulePage() {
     try {
       setErr("");
 
-      // 보강 줄이면 원수업 링크만 정리(있을 때만)
       if (isMakeupRow(r) && r.original_event_id) {
         const { error: upErr } = await supabase
           .from("student_events")
@@ -722,12 +731,7 @@ export default function ReadingSchedulePage() {
           <div style={styles.addGrid}>
             <div>
               <div style={styles.label}>학생이름</div>
-              <input
-                value={addName}
-                onChange={(e) => setAddName(e.target.value)}
-                placeholder="예: 김민준"
-                style={styles.input}
-              />
+              <input value={addName} onChange={(e) => setAddName(e.target.value)} placeholder="예: 김민준" style={styles.input} />
             </div>
 
             <div>
@@ -771,9 +775,7 @@ export default function ReadingSchedulePage() {
         >
           <div onMouseDown={(e) => e.stopPropagation()} style={styles.modal}>
             <div style={styles.modalHead}>
-              <div style={{ fontSize: 16, fontWeight: 900, color: COLORS.text }}>
-                결석 처리: {target?.student_name || "-"}
-              </div>
+              <div style={{ fontSize: 16, fontWeight: 900, color: COLORS.text }}>결석 처리: {target?.student_name || "-"}</div>
               <button
                 type="button"
                 onClick={() => {
@@ -864,10 +866,6 @@ export default function ReadingSchedulePage() {
   );
 }
 
-/**
- * ✅ 컬럼 폭 조정
- * - 맨 오른쪽에 "삭제" 컬럼 추가
- */
 const GRID = "46px 66px 0.92fr 0.80fr 72px 110px 1.60fr 86px 1.18fr 78px";
 
 const styles = {
@@ -1044,7 +1042,6 @@ const styles = {
     whiteSpace: "nowrap",
   },
 
-  // ✅ 출결 텍스트 두 줄
   attnBox: {
     width: "100%",
     display: "flex",
@@ -1144,7 +1141,6 @@ const styles = {
     background: "#fff",
   },
 
-  // ✅ 하단 보강 추가 폼 스타일
   addBox: {
     marginTop: 18,
     border: `1px solid ${COLORS.border}`,

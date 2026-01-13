@@ -325,8 +325,12 @@ export default function OneToOneSchedulePage() {
   }, [events]);
 
   function getAttendanceBaseHHMM(e) {
+    // ✅ oto_class는 테스트시간 우선(없으면 수업시간)
     if (e.kind === "oto_class") return testTimeByStudentId.get(e.student_id) || toHHMM(e.start_time);
+
+    // ✅ 보강은 makeup_time(테스트시간) 우선(없으면 수업시간)
     if (e.kind === "extra" && e.event_kind === "makeup") return (e.makeup_time || "").trim() || toHHMM(e.start_time);
+
     return toHHMM(e.start_time);
   }
 
@@ -352,6 +356,7 @@ export default function OneToOneSchedulePage() {
     }));
   }
 
+  // ✅✅✅ FIX: 보강 출석처리 시 makeup_time/makeup_class_time 절대 지우지 않음
   async function markPresent(e) {
     setSavingId(e.id);
     setErr("");
@@ -361,18 +366,27 @@ export default function OneToOneSchedulePage() {
       const scheduled = parseHHMMToDate(selectedDate, base || "00:00");
       const late = Math.max(0, minutesDiff(now, scheduled));
 
-      const { error } = await supabase
-        .from("student_events")
-        .update({
-          attendance_status: "present",
-          attended_at: now.toISOString(),
-          late_minutes: late,
-          absent_reason: null,
-          makeup_date: null,
-          makeup_time: null,
-          makeup_class_time: null,
-        })
-        .eq("id", e.id);
+      const isMakeup = e.kind === "extra" && e.event_kind === "makeup";
+
+      const payload = isMakeup
+        ? {
+            attendance_status: "present",
+            attended_at: now.toISOString(),
+            late_minutes: late,
+            absent_reason: null,
+            // ✅ 보강은 makeup_time/makeup_class_time 유지 (중요)
+          }
+        : {
+            attendance_status: "present",
+            attended_at: now.toISOString(),
+            late_minutes: late,
+            absent_reason: null,
+            makeup_date: null,
+            makeup_time: null,
+            makeup_class_time: null,
+          };
+
+      const { error } = await supabase.from("student_events").update(payload).eq("id", e.id);
 
       if (error) throw error;
       await load();
