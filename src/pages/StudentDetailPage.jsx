@@ -204,8 +204,14 @@ export default function StudentDetailPage() {
 
   const [eventsByDate, setEventsByDate] = useState({});
 
-  // 강의 선택
-  const [courseKey, setCourseKey] = useState("");
+  // ===== 강의 선택 =====
+  // ✅ 과정명 드롭다운용: lecture_courses 목록 로드
+  const [courseOptions, setCourseOptions] = useState([]); // [{id,name}]
+  const [coursesLoading, setCoursesLoading] = useState(false);
+
+  // 드롭다운에서 선택된 과정 (id + name)
+  const [courseId, setCourseId] = useState("");
+  const [courseKey, setCourseKey] = useState(""); // (기존 로직 호환) name 저장
   const [lectureInput, setLectureInput] = useState("");
   const [selectedLectureGroups, setSelectedLectureGroups] = useState([]);
   const [lastAddedText, setLastAddedText] = useState("");
@@ -225,7 +231,10 @@ export default function StudentDetailPage() {
   }, [weekMondays]);
 
   const rangeMin = useMemo(() => (calendarDates.length ? calendarDates[0] : startWeek), [calendarDates, startWeek]);
-  const rangeMax = useMemo(() => (calendarDates.length ? calendarDates[calendarDates.length - 1] : addDays(endWeek, 5)), [calendarDates, endWeek]);
+  const rangeMax = useMemo(
+    () => (calendarDates.length ? calendarDates[calendarDates.length - 1] : addDays(endWeek, 5)),
+    [calendarDates, endWeek]
+  );
 
   const greenWeekdaySet = useMemo(() => {
     const s = new Set();
@@ -300,6 +309,19 @@ export default function StudentDetailPage() {
     else if (isGreenDay(dateIso)) bg = COLORS.greenSoft;
 
     return { labels, status, bg };
+  }
+
+  async function loadCourses() {
+    setCoursesLoading(true);
+    try {
+      const { data, error } = await supabase.from("lecture_courses").select("id, name").order("name", { ascending: true });
+      if (error) throw error;
+      setCourseOptions((data || []).filter((r) => r?.id && r?.name));
+    } catch (e) {
+      setErr(e?.message || String(e));
+    } finally {
+      setCoursesLoading(false);
+    }
   }
 
   async function load() {
@@ -416,6 +438,11 @@ export default function StudentDetailPage() {
 
     setEventsByDate(out);
   }
+
+  useEffect(() => {
+    loadCourses();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     if (!studentId) return;
@@ -662,16 +689,22 @@ export default function StudentDetailPage() {
 
     setErr("");
     try {
+      // ✅ 드롭다운에서 선택된 과정이면, 선택된 id/name을 그대로 사용
       let course = null;
 
-      const { data: c1, error: c1err } = await supabase.from("lecture_courses").select("id, name").eq("name", ck).maybeSingle();
-      if (c1err) throw c1err;
-      course = c1 || null;
+      if (courseId) {
+        course = { id: courseId, name: ck };
+      } else {
+        // (혹시라도 courseId가 비어있을 때를 위한 기존 fallback)
+        const { data: c1, error: c1err } = await supabase.from("lecture_courses").select("id, name").eq("name", ck).maybeSingle();
+        if (c1err) throw c1err;
+        course = c1 || null;
 
-      if (!course) {
-        const { data: c2, error: c2err } = await supabase.from("lecture_courses").select("id, name").ilike("name", ck).maybeSingle();
-        if (c2err) throw c2err;
-        course = c2 || null;
+        if (!course) {
+          const { data: c2, error: c2err } = await supabase.from("lecture_courses").select("id, name").ilike("name", ck).maybeSingle();
+          if (c2err) throw c2err;
+          course = c2 || null;
+        }
       }
 
       if (!course?.id) {
@@ -907,7 +940,7 @@ export default function StudentDetailPage() {
     WebkitLineClamp: 2,
   };
 
-  // ✅ 입력 중에도 굵기 과하지 않게 (요청사항 #1)
+  // ✅ 입력 중에도 굵기 과하지 않게
   const inputWeight = 700;
 
   const tinyInput = {
@@ -917,7 +950,7 @@ export default function StudentDetailPage() {
     border: `1px solid ${COLORS.line}`,
     background: COLORS.white,
     padding: "0 10px",
-    fontWeight: inputWeight, // ✅ 기존 900 -> 700
+    fontWeight: inputWeight,
     outline: "none",
   };
 
@@ -927,7 +960,7 @@ export default function StudentDetailPage() {
     borderRadius: 10,
     border: `1px solid ${COLORS.line}`,
     padding: "0 10px",
-    fontWeight: inputWeight, // ✅ 편집 인풋도 통일
+    fontWeight: inputWeight,
     outline: "none",
   };
 
@@ -1183,9 +1216,32 @@ export default function StudentDetailPage() {
         <div style={sectionTitle}>강의 링크 선택</div>
 
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
+          {/* ✅ 과정: 드롭다운 */}
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
             <div style={{ fontSize: 12, color: COLORS.sub, fontWeight: 1000 }}>과정</div>
-            <input value={courseKey} onChange={(e) => setCourseKey(e.target.value)} placeholder="예: pre구문" style={{ ...tinyInput, width: 300 }} />
+
+            <select
+              value={courseId || ""}
+              onChange={(e) => {
+                const id = e.target.value || "";
+                setCourseId(id);
+                const found = courseOptions.find((c) => c.id === id);
+                setCourseKey(found?.name || "");
+              }}
+              style={{ ...tinyInput, width: 300, appearance: "none" }}
+              disabled={coursesLoading}
+            >
+              <option value="">{coursesLoading ? "불러오는 중…" : "과정 선택"}</option>
+              {courseOptions.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+
+            <div style={{ fontSize: 11, color: COLORS.sub, fontWeight: 900, marginTop: 2 }}>
+              {courseId ? `선택됨: ${courseKey}` : courseOptions.length ? "과정을 먼저 선택하세요" : "강의관리(lecture_courses)에 과정이 없어요"}
+            </div>
           </div>
 
           <div style={{ display: "flex", flexDirection: "column", gap: 6, flex: 1, minWidth: 260 }}>
@@ -1193,7 +1249,12 @@ export default function StudentDetailPage() {
             <input value={lectureInput} onChange={(e) => setLectureInput(e.target.value)} placeholder="예: OT, 1-2, 7" style={tinyInput} />
           </div>
 
-          <button type="button" style={btnPrimary} onClick={addSelectedLectures} disabled={!String(courseKey || "").trim() || !String(lectureInput || "").trim()}>
+          <button
+            type="button"
+            style={btnPrimary}
+            onClick={addSelectedLectures}
+            disabled={!String(courseKey || "").trim() || !String(lectureInput || "").trim()}
+          >
             <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
               <PlusIcon /> 강의 추가
             </span>
@@ -1279,7 +1340,7 @@ export default function StudentDetailPage() {
           </div>
         ) : null}
 
-        {/* ✅ 자동 메시지 (여기로 메시지 생성 버튼 이동) */}
+        {/* ✅ 자동 메시지 */}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
           <div style={sectionTitle}>자동 메시지</div>
 

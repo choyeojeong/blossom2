@@ -55,8 +55,27 @@ function hhmmFromISO(ts) {
 function kindLabel(e) {
   // e.kind: oto_class | oto_test | reading | extra
   if (!e) return "-";
+
+  // ✅ 보강이면: 일대일보강 / 독해보강 표시
   const isMakeup = e.kind === "extra" && e.event_kind === "makeup";
-  if (isMakeup) return "보강";
+  if (isMakeup) {
+    // 원결석 종류를 저장해둔 컬럼이 제일 정확
+    const sk = String(e.schedule_kind || "").toLowerCase().trim();
+
+    // schedule_kind: "oto_class" | "reading" | "extra" ... (프로젝트에서 쓰는 값 기준)
+    if (sk === "oto" || sk === "oto_class" || sk === "one_to_one") return "일대일보강";
+    if (sk === "reading") return "독해보강";
+
+    // fallback: 수동/구버전 데이터는 schedule_kind가 비어있을 수 있음
+    // 이런 경우엔 original_event_id가 있으면 그 원결석 kind로 판별 가능 (단, 여기 함수는 단일 row만 받으므로 raw에 original_kind를 붙여서 넘겨줌)
+    const ok = String(e.__original_kind || "").toLowerCase().trim();
+    if (ok === "oto_class") return "일대일보강";
+    if (ok === "reading") return "독해보강";
+
+    // 마지막 fallback
+    return "보강";
+  }
+
   if (e.kind === "oto_class") return "일대일";
   if (e.kind === "reading") return "독해";
   if (e.kind === "extra") return "추가등원";
@@ -86,7 +105,7 @@ function punctualLabel(e) {
   if (!e) return "";
   if (e.attendance_status !== "present") return "";
 
-  // ✅ 수정(여기만): late_minutes가 null이어도 0으로 취급되지 않게
+  // ✅ late_minutes가 null이어도 0으로 취급되지 않게
   const hasLate = e.late_minutes !== null && e.late_minutes !== undefined;
   const lateNum = hasLate ? Number(e.late_minutes) : null;
 
@@ -127,6 +146,7 @@ export default function AttendanceStatusPage() {
     try {
       // 1) 월 이벤트 로드
       // - oto_test는 화면엔 안 보이지만 일대일 테스트시간 표시용으로 필요
+      // ✅ schedule_kind 추가 로드 (보강 종류 표시용)
       const { data: base, error } = await supabase
         .from("student_events")
         .select(
@@ -147,6 +167,7 @@ export default function AttendanceStatusPage() {
           original_event_id,
           makeup_event_id,
           event_kind,
+          schedule_kind,
           memo,
           students:students (
             id,
@@ -199,6 +220,7 @@ export default function AttendanceStatusPage() {
             original_event_id,
             makeup_event_id,
             event_kind,
+            schedule_kind,
             memo,
             students:students (
               id,
@@ -218,15 +240,12 @@ export default function AttendanceStatusPage() {
       const all = [...baseRows, ...extraRows];
 
       // 3) 날짜 접힘 상태 초기화: "기본은 접힘"
-      //    - 새로 등장한 날짜들만 true(접힘)로 세팅
       const datesInMonth = new Set(baseRows.map((r) => r.event_date));
       setCollapsedByDate((prev) => {
         const next = { ...prev };
         for (const d of datesInMonth) {
           if (next[d] === undefined) next[d] = true; // 기본 접힘
         }
-        // 월 이동 시 이전 월 날짜가 남아있어도 상관없지만, 깔끔하게 현재 월만 남기고 싶다면 아래 주석 해제:
-        // for (const k of Object.keys(next)) if (!datesInMonth.has(k)) delete next[k];
         return next;
       });
 
@@ -263,11 +282,9 @@ export default function AttendanceStatusPage() {
   }, [events]);
 
   // ✅ 화면에 보여줄 row 만들기
-  // - oto_test는 숨김(oto_class에서 작은 글씨로 표시)
   const visibleRows = useMemo(() => {
     const nameQ = (q || "").trim().toLowerCase();
 
-    // month 범위의 이벤트만 “날짜 섹션”에 포함 (링크 로드한 월 밖 이벤트는 "정보 표시용"으로만 활용)
     const monthOnly = events.filter((r) => r.event_date >= monthStart && r.event_date <= monthEnd);
 
     const rows = monthOnly
@@ -281,11 +298,15 @@ export default function AttendanceStatusPage() {
         const st = r.students || {};
 
         const isMakeup = r.kind === "extra" && r.event_kind === "makeup";
-        const type = kindLabel(r);
 
         // 원결석/보강 정보
         const original = r.original_event_id ? byId.get(r.original_event_id) : null;
         const makeup = r.makeup_event_id ? byId.get(r.makeup_event_id) : null;
+
+        // ✅ 보강 종류 fallback용: 원결석 kind를 raw에 붙여줌
+        const rawForLabel = isMakeup ? { ...r, __original_kind: original?.kind || "" } : r;
+
+        const type = kindLabel(rawForLabel);
 
         // 일대일 테스트시간(작게)
         let testHH = "";
@@ -297,7 +318,7 @@ export default function AttendanceStatusPage() {
         // 시간(정렬 기준도 start_time)
         const startHH = toHHMM(r.start_time);
 
-        // 보강일정보(원결석 row에서) - makeup_event_id가 있으면 표시
+        // 보강일정보(원결석 row에서)
         let makeupInfo = "";
         if (makeup) {
           const md = makeup.event_date;
@@ -307,7 +328,7 @@ export default function AttendanceStatusPage() {
           makeupInfo = `보강: ${md}${mix ? ` (${mix})` : ""}`;
         }
 
-        // 원결석일정보(보강 row에서) - original_event_id 있으면 표시
+        // 원결석일정보(보강 row에서)
         let originalInfo = "";
         if (original) {
           const od = original.event_date;
@@ -315,17 +336,14 @@ export default function AttendanceStatusPage() {
           originalInfo = `원결석: ${od}${oc ? ` (${oc})` : ""}`;
         }
 
-        // 결석사유
         const absentReason = (r.absent_reason || "").trim();
-
-        // 정시/지각
         const punctual = punctualLabel(r);
 
         return {
           id: r.id,
           event_date: r.event_date,
           sort_time: startHH || "00:00",
-          raw: r,
+          raw: rawForLabel, // ✅ label 계산에 원결석kind 포함
           st,
           type,
           isMakeup,
@@ -339,7 +357,6 @@ export default function AttendanceStatusPage() {
         };
       });
 
-    // 날짜/시간순 정렬
     rows.sort((a, b) => {
       if (a.event_date !== b.event_date) return a.event_date < b.event_date ? -1 : 1;
       if (a.sort_time !== b.sort_time) return a.sort_time < b.sort_time ? -1 : 1;
@@ -358,7 +375,6 @@ export default function AttendanceStatusPage() {
       arr.push(r);
       g.set(r.event_date, arr);
     }
-    // 날짜 오름차순 배열
     const dates = Array.from(g.keys()).sort((a, b) => (a < b ? -1 : 1));
     return { g, dates };
   }, [visibleRows]);
@@ -405,7 +421,7 @@ export default function AttendanceStatusPage() {
     width: "100%",
     borderCollapse: "collapse",
     tableLayout: "fixed",
-    minWidth: 1400, // 가로가 많으니 스크롤 허용
+    minWidth: 1400,
   };
 
   const thStyle = {
@@ -467,12 +483,7 @@ export default function AttendanceStatusPage() {
               →
             </button>
 
-            <input
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              placeholder="학생 이름 검색"
-              style={inputStyle}
-            />
+            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="학생 이름 검색" style={inputStyle} />
 
             <button type="button" style={btnGhost} onClick={() => setMonthCursor(firstDayOfMonth(new Date()))}>
               이번 달
@@ -523,14 +534,10 @@ export default function AttendanceStatusPage() {
                   >
                     <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                       <div style={{ fontWeight: 1000 }}>{formatDateHeader(dateIso)}</div>
-                      <div style={{ color: COLORS.sub, fontWeight: 900, fontSize: 12 }}>
-                        {rows.length}건
-                      </div>
+                      <div style={{ color: COLORS.sub, fontWeight: 900, fontSize: 12 }}>{rows.length}건</div>
                     </div>
 
-                    <div style={{ fontWeight: 1000, color: COLORS.sub }}>
-                      {isCollapsed ? "펼치기 ▼" : "접기 ▲"}
-                    </div>
+                    <div style={{ fontWeight: 1000, color: COLORS.sub }}>{isCollapsed ? "펼치기 ▼" : "접기 ▲"}</div>
                   </div>
 
                   {/* 접힘이면 숨김 */}
@@ -565,14 +572,10 @@ export default function AttendanceStatusPage() {
                                   <td style={{ ...tdStyle, fontWeight: 1000, textAlign: "center", whiteSpace: "normal" }}>
                                     <div>{r.startHH || "-"}</div>
                                     {r.testHH ? (
-                                      <div style={{ marginTop: 4, fontSize: 11, color: COLORS.sub, fontWeight: 900 }}>
-                                        테스트 {r.testHH}
-                                      </div>
+                                      <div style={{ marginTop: 4, fontSize: 11, color: COLORS.sub, fontWeight: 900 }}>테스트 {r.testHH}</div>
                                     ) : null}
                                     {r.isMakeup ? (
-                                      <div style={{ marginTop: 4, fontSize: 11, color: COLORS.sub, fontWeight: 1000 }}>
-                                        보강
-                                      </div>
+                                      <div style={{ marginTop: 4, fontSize: 11, color: COLORS.sub, fontWeight: 1000 }}>보강</div>
                                     ) : null}
                                   </td>
 
@@ -581,21 +584,13 @@ export default function AttendanceStatusPage() {
                                   <td style={{ ...tdStyle, textAlign: "center", color: COLORS.sub, fontWeight: 1000 }}>{r.st?.grade || "-"}</td>
                                   <td style={{ ...tdStyle, textAlign: "center", color: COLORS.sub, fontWeight: 1000 }}>{r.st?.teacher_name || "-"}</td>
 
-                                  <td style={{ ...tdStyle, textAlign: "center", fontWeight: 1000 }}>
-                                    {r.type}
-                                  </td>
+                                  <td style={{ ...tdStyle, textAlign: "center", fontWeight: 1000 }}>{r.type}</td>
 
-                                  <td style={{ ...tdStyle, textAlign: "center", fontWeight: 1000 }}>
-                                    {r.status}
-                                  </td>
+                                  <td style={{ ...tdStyle, textAlign: "center", fontWeight: 1000 }}>{r.status}</td>
 
-                                  <td style={{ ...tdStyle, color: r.punctual ? COLORS.text : COLORS.sub, fontWeight: 900 }}>
-                                    {r.punctual || "-"}
-                                  </td>
+                                  <td style={{ ...tdStyle, color: r.punctual ? COLORS.text : COLORS.sub, fontWeight: 900 }}>{r.punctual || "-"}</td>
 
-                                  <td style={{ ...tdStyle, color: r.absentReason ? COLORS.text : COLORS.sub, fontWeight: 900 }}>
-                                    {r.absentReason || "-"}
-                                  </td>
+                                  <td style={{ ...tdStyle, color: r.absentReason ? COLORS.text : COLORS.sub, fontWeight: 900 }}>{r.absentReason || "-"}</td>
 
                                   <td style={{ ...tdStyle, color: r.makeupInfo ? COLORS.text : COLORS.sub, fontWeight: 900, whiteSpace: "normal" }}>
                                     {r.makeupInfo || "-"}
