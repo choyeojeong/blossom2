@@ -306,12 +306,13 @@ export default function AttendanceStatusPage() {
       const nowIso = new Date().toISOString();
 
       // ✅ 출석: present + attended_at 기록, 결석사유 제거
+      // ✅ DB 체크제약: present면 late_minutes가 NULL이면 안 됨 → 0으로 저장
       const { error } = await supabase
         .from("student_events")
         .update({
           attendance_status: "present",
           attended_at: nowIso,
-          late_minutes: null,
+          late_minutes: 0, // ✅ FIX: 제약 통과
           absent_reason: null,
         })
         .eq("id", eventId);
@@ -322,7 +323,7 @@ export default function AttendanceStatusPage() {
       setEvents((prev) =>
         prev.map((r) =>
           r.id === eventId
-            ? { ...r, attendance_status: "present", attended_at: nowIso, late_minutes: null, absent_reason: null }
+            ? { ...r, attendance_status: "present", attended_at: nowIso, late_minutes: 0, absent_reason: null }
             : r
         )
       );
@@ -742,7 +743,7 @@ export default function AttendanceStatusPage() {
                                   <td style={{ ...tdStyle, color: r.punctual ? COLORS.text : COLORS.sub, fontWeight: 900 }}>{r.punctual || "-"}</td>
 
                                   {/* ✅ 결석사유: 추가등원(보강 제외)만 입력 가능 */}
-                                  <td style={{ ...tdStyle, whiteSpace: "normal" }}>
+                                  <td style={{ ...tdStyle, whiteSpace: "normal", overflow: "visible" /* ✅ FIX: input이 셀에서 안 보이던 문제 방지 */ }}>
                                     {canCheckExtra ? (
                                       <input
                                         value={draft}
