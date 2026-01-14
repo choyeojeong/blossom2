@@ -494,19 +494,20 @@ export default function AttendanceStatusPage() {
     minWidth: 240,
   };
 
-  // ✅✅✅ 가로 스크롤 확실히 나오게 (tableWrap + tableStyle만 수정)
+  // ✅✅✅ 여기만 핵심 수정: "auto" → "scroll"로 강제 + 스크롤바 보이게
   const tableWrap = {
     width: "100%",
     maxWidth: "100%",
-    overflowX: "auto",
+    overflowX: "scroll", // ✅ 강제 표시
     overflowY: "hidden",
     WebkitOverflowScrolling: "touch",
     borderTop: `1px solid ${COLORS.line}`,
+    paddingBottom: 6, // ✅ 스크롤바가 아래에 안 가려지게 약간 공간
   };
 
   const tableStyle = {
-    width: "max-content", // ✅ 핵심: 내용만큼 넓게
-    minWidth: 2010, // ✅ 현재 컬럼 width 합(2010px) 기준
+    width: "max-content",
+    minWidth: 2010,
     borderCollapse: "collapse",
     tableLayout: "fixed",
   };
@@ -584,6 +585,14 @@ export default function AttendanceStatusPage() {
 
   return (
     <div style={container}>
+      {/* ✅✅✅ 스크롤바가 “눈에 보이게” 스타일 추가 (기능 영향 X) */}
+      <style>{`
+        .attTableScroll::-webkit-scrollbar { height: 12px; }
+        .attTableScroll::-webkit-scrollbar-track { background: rgba(31,42,68,0.08); border-radius: 999px; }
+        .attTableScroll::-webkit-scrollbar-thumb { background: rgba(31,42,68,0.28); border-radius: 999px; }
+        .attTableScroll::-webkit-scrollbar-thumb:hover { background: rgba(31,42,68,0.38); }
+      `}</style>
+
       <div style={wrap}>
         {/* 상단 헤더 */}
         <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
@@ -662,7 +671,8 @@ export default function AttendanceStatusPage() {
 
                   {isCollapsed ? null : (
                     <div style={{ marginTop: 10 }}>
-                      <div style={tableWrap}>
+                      {/* ✅ className 추가해서 스크롤바 스타일 적용 */}
+                      <div style={tableWrap} className="attTableScroll">
                         <table style={tableStyle}>
                           <thead>
                             <tr>
@@ -719,7 +729,6 @@ export default function AttendanceStatusPage() {
 
                                   <td style={{ ...tdStyle, textAlign: "center", fontWeight: 1000 }}>{r.type}</td>
 
-                                  {/* ✅ 출결: 결석사유 입력란을 "결석 버튼 바로 아래"에 표시 */}
                                   <td style={{ ...tdStyle, textAlign: "center", whiteSpace: "normal" }}>
                                     {canCheckExtra ? (
                                       <div style={{ display: "flex", flexDirection: "column", gap: 6, alignItems: "center" }}>
