@@ -494,17 +494,21 @@ export default function AttendanceStatusPage() {
     minWidth: 240,
   };
 
+  // ✅✅✅ 가로 스크롤 확실히 나오게 (tableWrap + tableStyle만 수정)
   const tableWrap = {
     width: "100%",
+    maxWidth: "100%",
     overflowX: "auto",
+    overflowY: "hidden",
+    WebkitOverflowScrolling: "touch",
     borderTop: `1px solid ${COLORS.line}`,
   };
 
   const tableStyle = {
-    width: "100%",
+    width: "max-content", // ✅ 핵심: 내용만큼 넓게
+    minWidth: 2010, // ✅ 현재 컬럼 width 합(2010px) 기준
     borderCollapse: "collapse",
     tableLayout: "fixed",
-    minWidth: 1400,
   };
 
   const thStyle = {
@@ -691,17 +695,27 @@ export default function AttendanceStatusPage() {
                                   <td style={{ ...tdStyle, fontWeight: 1000, textAlign: "center", whiteSpace: "normal" }}>
                                     <div>{r.startHH || "-"}</div>
                                     {r.testHH ? (
-                                      <div style={{ marginTop: 4, fontSize: 11, color: COLORS.sub, fontWeight: 900 }}>테스트 {r.testHH}</div>
+                                      <div style={{ marginTop: 4, fontSize: 11, color: COLORS.sub, fontWeight: 900 }}>
+                                        테스트 {r.testHH}
+                                      </div>
                                     ) : null}
                                     {r.isMakeup ? (
-                                      <div style={{ marginTop: 4, fontSize: 11, color: COLORS.sub, fontWeight: 1000 }}>보강</div>
+                                      <div style={{ marginTop: 4, fontSize: 11, color: COLORS.sub, fontWeight: 1000 }}>
+                                        보강
+                                      </div>
                                     ) : null}
                                   </td>
 
                                   <td style={{ ...tdStyle, fontWeight: 1000, textAlign: "center" }}>{r.st?.name || "-"}</td>
-                                  <td style={{ ...tdStyle, textAlign: "center", color: COLORS.sub, fontWeight: 900 }}>{r.st?.school || "-"}</td>
-                                  <td style={{ ...tdStyle, textAlign: "center", color: COLORS.sub, fontWeight: 1000 }}>{r.st?.grade || "-"}</td>
-                                  <td style={{ ...tdStyle, textAlign: "center", color: COLORS.sub, fontWeight: 1000 }}>{r.st?.teacher_name || "-"}</td>
+                                  <td style={{ ...tdStyle, textAlign: "center", color: COLORS.sub, fontWeight: 900 }}>
+                                    {r.st?.school || "-"}
+                                  </td>
+                                  <td style={{ ...tdStyle, textAlign: "center", color: COLORS.sub, fontWeight: 1000 }}>
+                                    {r.st?.grade || "-"}
+                                  </td>
+                                  <td style={{ ...tdStyle, textAlign: "center", color: COLORS.sub, fontWeight: 1000 }}>
+                                    {r.st?.teacher_name || "-"}
+                                  </td>
 
                                   <td style={{ ...tdStyle, textAlign: "center", fontWeight: 1000 }}>{r.type}</td>
 
@@ -717,7 +731,6 @@ export default function AttendanceStatusPage() {
                                             style={smallBtnBlue}
                                             disabled={saving}
                                             onClick={() => {
-                                              // 다른 row의 입력칸 열려있으면 닫고, 이 row도 닫아줌
                                               setShowAbsentReasonForId((cur) => (cur === r.id ? null : cur));
                                               markExtraPresent(r.id);
                                             }}
@@ -731,12 +744,10 @@ export default function AttendanceStatusPage() {
                                             style={smallBtnRed}
                                             disabled={saving}
                                             onClick={() => {
-                                              // 1) 처음 누르면 입력칸 열기
                                               if (showAbsentReasonForId !== r.id) {
                                                 setShowAbsentReasonForId(r.id);
                                                 return;
                                               }
-                                              // 2) 입력칸이 열린 상태에서 다시 누르면 저장
                                               markExtraAbsent(r.id);
                                             }}
                                             title="추가등원 결석 처리 (사유 필수)"
@@ -749,7 +760,9 @@ export default function AttendanceStatusPage() {
                                           <div style={{ width: "100%", marginTop: 2 }}>
                                             <input
                                               value={draft}
-                                              onChange={(ev) => setAbsentDraftById((p) => ({ ...p, [r.id]: ev.target.value }))}
+                                              onChange={(ev) =>
+                                                setAbsentDraftById((p) => ({ ...p, [r.id]: ev.target.value }))
+                                              }
                                               onKeyDown={(ev) => {
                                                 if (ev.key === "Enter") markExtraAbsent(r.id);
                                                 if (ev.key === "Escape") setShowAbsentReasonForId(null);
@@ -774,18 +787,31 @@ export default function AttendanceStatusPage() {
                                     {r.punctual || "-"}
                                   </td>
 
-                                  {/* ✅ 결석사유 컬럼: 이제 "입력칸"이 아니라 "저장된 사유"만 보여줌 */}
                                   <td style={{ ...tdStyle, whiteSpace: "normal" }}>
                                     <div style={{ color: r.absentReason ? COLORS.text : COLORS.sub, fontWeight: 900 }}>
                                       {r.absentReason || "-"}
                                     </div>
                                   </td>
 
-                                  <td style={{ ...tdStyle, color: r.makeupInfo ? COLORS.text : COLORS.sub, fontWeight: 900, whiteSpace: "normal" }}>
+                                  <td
+                                    style={{
+                                      ...tdStyle,
+                                      color: r.makeupInfo ? COLORS.text : COLORS.sub,
+                                      fontWeight: 900,
+                                      whiteSpace: "normal",
+                                    }}
+                                  >
                                     {r.makeupInfo || "-"}
                                   </td>
 
-                                  <td style={{ ...tdStyle, color: r.originalInfo ? COLORS.text : COLORS.sub, fontWeight: 900, whiteSpace: "normal" }}>
+                                  <td
+                                    style={{
+                                      ...tdStyle,
+                                      color: r.originalInfo ? COLORS.text : COLORS.sub,
+                                      fontWeight: 900,
+                                      whiteSpace: "normal",
+                                    }}
+                                  >
                                     {r.originalInfo || "-"}
                                   </td>
                                 </tr>
@@ -798,8 +824,7 @@ export default function AttendanceStatusPage() {
                       <div style={{ marginTop: 8, color: COLORS.sub, fontSize: 12, fontWeight: 900 }}>
                         · 색상: 출석(연파랑) / 결석(연빨강) / 보강 미처리(연노랑)
                         <br />
-                        · 이 화면에서 출결 버튼은 <b>추가등원(보강 제외)</b>만 가능합니다.
-                        (결석은 “결석” 클릭 → 사유 입력 → Enter 또는 “결석” 재클릭)
+                        · 이 화면에서 출결 버튼은 <b>추가등원(보강 제외)</b>만 가능합니다. (결석은 “결석” 클릭 → 사유 입력 → Enter 또는 “결석” 재클릭)
                       </div>
                     </div>
                   )}
