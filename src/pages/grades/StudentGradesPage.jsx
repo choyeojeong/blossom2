@@ -285,9 +285,11 @@ export default function StudentGradesPage() {
 
     setSaving(true);
     try {
-      const { error } = await supabase
-        .from("student_scores")
-        .upsert(payload, { onConflict: "student_id,year,school_grade,semester,exam_kind" });
+      // ✅ partial unique index(WHERE type=...) 매칭 실패 방지:
+      //    type 포함 일반 unique로 바꾼 경우에 맞춰 onConflict도 type 포함으로
+      const { error } = await supabase.from("student_scores").upsert(payload, {
+        onConflict: "student_id,type,year,school_grade,semester,exam_kind",
+      });
       if (error) throw error;
 
       setFSchool((p) => ({ ...p, score: "" }));
@@ -323,8 +325,9 @@ export default function StudentGradesPage() {
 
     setSaving(true);
     try {
+      // ✅ type 포함 onConflict
       const { error } = await supabase.from("student_scores").upsert(payload, {
-        onConflict: "student_id,year,school_grade,month",
+        onConflict: "student_id,type,year,school_grade,month",
       });
       if (error) throw error;
 
@@ -363,9 +366,10 @@ export default function StudentGradesPage() {
 
     setSaving(true);
     try {
-      const { error } = await supabase
-        .from("student_scores")
-        .upsert(payload, { onConflict: "student_id,exam_date,title" });
+      // ✅ type 포함 onConflict (DB를 type 포함 unique로 정리한 경우)
+      const { error } = await supabase.from("student_scores").upsert(payload, {
+        onConflict: "student_id,type,exam_date,title",
+      });
       if (error) throw error;
 
       setFAcademy((p) => ({ ...p, score: "" }));
