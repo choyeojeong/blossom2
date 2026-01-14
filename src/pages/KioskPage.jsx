@@ -68,11 +68,21 @@ function beepErr() {
 
 // ✅ 분류 규칙(필요하면 여기만 바꾸면 됨)
 function classifyKind(row) {
-  const k = (row?.kind || "").toLowerCase();
+  const k = String(row?.kind || "").toLowerCase();
 
-  if (k === "reading") return "reading"; // 독해(보강 포함)
-  if (k === "oto" || k === "one_to_one" || k === "1to1") return "oto"; // 일대일(보강 포함)
-  if (k === "extra" || k === "extra_attendance" || k === "add") return "extra"; // 추가등원
+  // ✅ DB 실제 값 반영 (핵심 수정)
+  // - 일대일: oto_class (보강 포함) / 과거 호환: oto, one_to_one, 1to1
+  if (k === "oto_class" || k === "oto" || k === "one_to_one" || k === "1to1") return "oto";
+
+  // - 독해: reading
+  if (k === "reading") return "reading";
+
+  // - 추가등원: extra (과거 호환)
+  if (k === "extra" || k === "extra_attendance" || k === "add") return "extra";
+
+  // - 테스트(출석 통계에서 제외하고 싶으면 other로 유지)
+  if (k === "oto_test") return "other";
+
   return "other";
 }
 
@@ -231,7 +241,9 @@ function MonthEndOverlay({ open, onClose, variant = "preview" }) {
         </div>
 
         <div style={{ marginTop: 12, fontSize: 13, color: COLORS.sub, fontWeight: 800 }}>
-          {isReward ? "(자동 표시) · 바깥을 클릭하거나 잠시 후 자동으로 닫혀요." : "(테스트용 화면) · 바깥을 클릭하거나 잠시 후 자동으로 닫혀요."}
+          {isReward
+            ? "(자동 표시) · 바깥을 클릭하거나 잠시 후 자동으로 닫혀요."
+            : "(테스트용 화면) · 바깥을 클릭하거나 잠시 후 자동으로 닫혀요."}
         </div>
 
         <div style={{ marginTop: 14, display: "flex", justifyContent: "center" }}>
@@ -277,15 +289,11 @@ export default function KioskPage() {
   const rewardTimerRef = useRef(null);
 
   function openMonthEndPreview() {
-    // 기존 기능 영향 X: 단순 UI 미리보기만
     setMonthEndPreviewOpen(true);
     try {
       beepOk();
-    } catch {
-      // ignore
-    }
+    } catch {}
 
-    // 4초 후 자동 닫기
     if (previewTimerRef.current) clearTimeout(previewTimerRef.current);
     previewTimerRef.current = setTimeout(() => {
       setMonthEndPreviewOpen(false);
@@ -294,7 +302,6 @@ export default function KioskPage() {
   }
 
   function openMonthEndRewardOnce(studentId, monthKey) {
-    // ✅ 같은 학생/같은 달에 1번만
     const lsKey = `kiosk_month_reward_shown__${studentId}__${monthKey}`;
     if (localStorage.getItem(lsKey) === "1") return;
     localStorage.setItem(lsKey, "1");
@@ -302,11 +309,8 @@ export default function KioskPage() {
     setMonthEndRewardOpen(true);
     try {
       beepOk();
-    } catch {
-      // ignore
-    }
+    } catch {}
 
-    // 4초 후 자동 닫기
     if (rewardTimerRef.current) clearTimeout(rewardTimerRef.current);
     rewardTimerRef.current = setTimeout(() => {
       setMonthEndRewardOpen(false);
@@ -321,7 +325,6 @@ export default function KioskPage() {
     };
   }, []);
 
-  // ✅ 학생 번호 = students.phone_digits 로 확정
   async function findStudentByCode(phoneDigits) {
     const { data, error } = await supabase
       .from("students")
@@ -330,13 +333,15 @@ export default function KioskPage() {
       .maybeSingle();
 
     if (error) throw error;
-    return data; // 없으면 null
+    return data;
   }
 
   async function loadTodayEvents(studentId) {
     const { data, error } = await supabase
       .from("student_events")
-      .select("id, kind, start_time, makeup_time, attendance_status, original_event_id, event_date, event_kind, late_minutes")
+      .select(
+        "id, kind, start_time, makeup_time, attendance_status, original_event_id, event_date, event_kind, late_minutes"
+      )
       .eq("student_id", studentId)
       .eq("event_date", today)
       .order("start_time", { ascending: true });
@@ -381,7 +386,7 @@ export default function KioskPage() {
       .update({
         attendance_status: "present",
         attended_at: now.toISOString(),
-        late_minutes: 0, // ✅ 칼같이: 키오스크 출석은 무조건 0
+        late_minutes: 0,
       })
       .in("id", ids);
 
@@ -390,17 +395,10 @@ export default function KioskPage() {
     return { updatedCount: ids.length, updatedIds: ids };
   }
 
-  /**
-   * ✅ 월말 보상 조건 검사 (자동)
-   * 조건:
-   * 1) 이번 달(달력 기준) student_events 중 (oto_test 제외) "표시 대상 수업"이 1개 이상 존재
-   * 2) 그 달의 모든 표시 대상 수업이 attendance_status='present' AND late_minutes === 0 (null 불가)
-   * 3) today가 그 학생의 "이번 달 마지막 수업 날짜"와 같을 때 (학생 기준 마지막 수업)
-   */
   async function checkAndMaybeShowMonthEndReward(studentId) {
     const mStart = dayjs(today).startOf("month").format("YYYY-MM-DD");
     const mEnd = dayjs(today).endOf("month").format("YYYY-MM-DD");
-    const monthKey = dayjs(today).format("YYYY-MM"); // 로컬스토리지 중복 방지 키
+    const monthKey = dayjs(today).format("YYYY-MM");
 
     const { data, error } = await supabase
       .from("student_events")
@@ -408,17 +406,13 @@ export default function KioskPage() {
       .eq("student_id", studentId)
       .gte("event_date", mStart)
       .lte("event_date", mEnd)
-      .in("kind", ["oto_class", "reading", "extra"]); // ✅ oto_test는 제외(조회 자체에서 배제)
+      .in("kind", ["oto_class", "reading", "extra"]);
 
     if (error) throw error;
 
-    const rows = (data || [])
-      // ✅ 보상 판단에 포함될 수업만 남김 (혹시 kind가 섞여 들어올 대비)
-      .filter((r) => r.kind !== "oto_test");
-
+    const rows = (data || []).filter((r) => r.kind !== "oto_test");
     if (rows.length === 0) return;
 
-    // 학생 기준 "이번 달 마지막 수업 날짜"
     let lastDate = "";
     for (const r of rows) {
       const d = String(r.event_date || "");
@@ -426,10 +420,8 @@ export default function KioskPage() {
     }
     if (!lastDate) return;
 
-    // 오늘이 그 학생의 마지막 수업 날짜가 아니면 보상 X
     if (today !== lastDate) return;
 
-    // ✅ 완벽 출석(칼같이): present + late_minutes === 0 (null/undefined/양수 전부 탈락)
     const perfect = rows.every((r) => {
       if (String(r.attendance_status || "").toLowerCase() !== "present") return false;
       return r.late_minutes === 0;
@@ -437,7 +429,6 @@ export default function KioskPage() {
 
     if (!perfect) return;
 
-    // ✅ 조건 충족 → 자동 보상 표시(달/학생 1회)
     openMonthEndRewardOnce(studentId, monthKey);
   }
 
@@ -451,7 +442,6 @@ export default function KioskPage() {
       return;
     }
 
-    // ✅ students.phone_digits 제약: 8~11자리
     if (digits.length < 8 || digits.length > 11) {
       setErr("학생 번호는 8~11자리 숫자여야 해요.");
       beepErr();
@@ -495,16 +485,10 @@ export default function KioskPage() {
 
       beepOk();
 
-      // ✅ (추가) 출석 처리 직후 월말 보상 조건 검사
-      // - 기존 출석 기능 영향 없음
-      // - 조건 만족 시에만 자동 오버레이 표시
       try {
         await checkAndMaybeShowMonthEndReward(st.id);
-      } catch {
-        // 월말보상은 부가기능이므로 실패해도 출석 자체는 유지
-      }
+      } catch {}
 
-      // 다음 학생 입력을 위해 자동 초기화/포커스
       setCode("");
       setTimeout(() => inputRef.current?.focus(), 50);
     } catch (e) {
@@ -532,7 +516,6 @@ export default function KioskPage() {
         position: "relative",
       }}
     >
-      {/* ✅ 우상단 월말테스트 버튼(기존 기능 영향 X) */}
       <button
         type="button"
         onClick={openMonthEndPreview}
@@ -555,14 +538,12 @@ export default function KioskPage() {
         월말테스트
       </button>
 
-      {/* ✅ 월말 보상 화면 미리보기 오버레이 */}
       <MonthEndOverlay
         open={monthEndPreviewOpen}
         onClose={() => setMonthEndPreviewOpen(false)}
         variant="preview"
       />
 
-      {/* ✅ 월말 자동 보상 오버레이 */}
       <MonthEndOverlay
         open={monthEndRewardOpen}
         onClose={() => setMonthEndRewardOpen(false)}
@@ -726,7 +707,9 @@ export default function KioskPage() {
                   fontSize: 12,
                 }}
               >
-                참고: 알 수 없는 kind 수업 {result.totals.other.total}개가 있어요(집계 제외). DB의 kind 값을 확인해 주세요.
+                참고: 알 수 없는 kind 수업 {result.totals.other.total}개가 있어요(집계 제외).
+                <br />
+                (예: oto_class / reading / extra 외 값) DB의 kind 값을 확인해 주세요.
               </div>
             ) : null}
           </div>

@@ -59,14 +59,10 @@ function kindLabel(e) {
   // ✅ 보강이면: 일대일보강 / 독해보강 표시
   const isMakeup = e.kind === "extra" && e.event_kind === "makeup";
   if (isMakeup) {
-    // 원결석 종류를 저장해둔 컬럼이 제일 정확
     const sk = String(e.schedule_kind || "").toLowerCase().trim();
-
-    // schedule_kind: "oto_class" | "reading" | "extra" ... (프로젝트에서 쓰는 값 기준)
     if (sk === "oto" || sk === "oto_class" || sk === "one_to_one") return "일대일보강";
     if (sk === "reading") return "독해보강";
 
-    // fallback: 수동/구버전 데이터는 schedule_kind가 비어있을 수 있음
     const ok = String(e.__original_kind || "").toLowerCase().trim();
     if (ok === "oto_class") return "일대일보강";
     if (ok === "reading") return "독해보강";
@@ -84,7 +80,6 @@ function kindLabel(e) {
 function rowBg(e) {
   if (!e) return "transparent";
 
-  // 보강은 미처리일 때만 노랑, 처리되면 출석/결석 색을 따른다.
   const isMakeup = e.kind === "extra" && e.event_kind === "makeup";
   if (e.attendance_status === "present") return COLORS.blueSoft;
   if (e.attendance_status === "absent") return COLORS.redSoft;
@@ -103,7 +98,6 @@ function punctualLabel(e) {
   if (!e) return "";
   if (e.attendance_status !== "present") return "";
 
-  // ✅ late_minutes가 null이어도 0으로 취급되지 않게
   const hasLate = e.late_minutes !== null && e.late_minutes !== undefined;
   const lateNum = hasLate ? Number(e.late_minutes) : null;
 
@@ -117,7 +111,6 @@ function punctualLabel(e) {
 }
 
 function formatDateHeader(iso) {
-  // iso: YYYY-MM-DD
   const [y, m, d] = iso.split("-").map((v) => parseInt(v, 10));
   const dt = new Date(y, (m || 1) - 1, d || 1);
   const w = ["일", "월", "화", "수", "목", "금", "토"][dt.getDay()];
@@ -125,28 +118,32 @@ function formatDateHeader(iso) {
 }
 
 export default function AttendanceStatusPage() {
-  // ✅ 기본: 오늘 기준 현재 달
   const [monthCursor, setMonthCursor] = useState(() => firstDayOfMonth(new Date()));
   const [q, setQ] = useState("");
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
 
-  const [events, setEvents] = useState([]); // month + linked rows
-  const [collapsedByDate, setCollapsedByDate] = useState({}); // iso -> boolean (true면 접힘)
+  const [events, setEvents] = useState([]);
+  const [collapsedByDate, setCollapsedByDate] = useState({});
 
-  // ✅ 추가등원 출결 입력용(이 화면에서만)
-  const [absentDraftById, setAbsentDraftById] = useState({}); // { [eventId]: string }
-  const [savingById, setSavingById] = useState({}); // { [eventId]: boolean }
+  // ✅ 추가등원 출결 입력용
+  const [absentDraftById, setAbsentDraftById] = useState({});
+  const [savingById, setSavingById] = useState({});
+
+  // ✅ (추가) "결석사유 입력란"을 출결 버튼 바로 아래에 띄우기 위한 상태
+  const [showAbsentReasonForId, setShowAbsentReasonForId] = useState(null);
 
   const monthStart = useMemo(() => toISODate(firstDayOfMonth(monthCursor)), [monthCursor]);
   const monthEnd = useMemo(() => toISODate(lastDayOfMonth(monthCursor)), [monthCursor]);
-  const monthTitle = useMemo(() => `${monthCursor.getFullYear()}년 ${monthCursor.getMonth() + 1}월`, [monthCursor]);
+  const monthTitle = useMemo(
+    () => `${monthCursor.getFullYear()}년 ${monthCursor.getMonth() + 1}월`,
+    [monthCursor]
+  );
 
   async function load() {
     setLoading(true);
     setErr("");
     try {
-      // 1) 월 이벤트 로드
       const { data: base, error } = await supabase
         .from("student_events")
         .select(
@@ -188,7 +185,6 @@ export default function AttendanceStatusPage() {
 
       const baseRows = base || [];
 
-      // 2) 링크된 원결석/보강 이벤트가 월 밖에 있을 수도 있으니, 필요한 것만 추가로 로드
       const haveIds = new Set(baseRows.map((r) => r.id));
       const needIds = new Set();
 
@@ -239,7 +235,6 @@ export default function AttendanceStatusPage() {
 
       const all = [...baseRows, ...extraRows];
 
-      // 3) 날짜 접힘 상태 초기화: "기본은 접힘"
       const datesInMonth = new Set(baseRows.map((r) => r.event_date));
       setCollapsedByDate((prev) => {
         const next = { ...prev };
@@ -249,7 +244,7 @@ export default function AttendanceStatusPage() {
         return next;
       });
 
-      // ✅ 추가등원 결석사유 draft 초기화(이미 입력돼있으면 그 값)
+      // ✅ 추가등원 결석사유 draft 초기화
       setAbsentDraftById((prev) => {
         const next = { ...prev };
         for (const r of all) {
@@ -261,6 +256,9 @@ export default function AttendanceStatusPage() {
       });
 
       setEvents(all);
+
+      // ✅ 로드할 때 열린 입력칸이 의미 없어질 수 있으니 닫아줌
+      setShowAbsentReasonForId(null);
     } catch (e) {
       setErr(e?.message || String(e));
       setEvents([]);
@@ -274,14 +272,12 @@ export default function AttendanceStatusPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [monthStart, monthEnd]);
 
-  // ✅ 조회 편의: id -> event
   const byId = useMemo(() => {
     const m = new Map();
     for (const r of events) m.set(r.id, r);
     return m;
   }, [events]);
 
-  // ✅ 일대일 테스트시간 매핑: (student_id + event_date + season) -> HH:MM
   const testTimeKeyMap = useMemo(() => {
     const m = new Map();
     for (const r of events) {
@@ -292,7 +288,6 @@ export default function AttendanceStatusPage() {
     return m;
   }, [events]);
 
-  // ✅ 이 화면에서 "추가등원(보강 제외)"만 출결 처리
   function isExtraNormal(raw) {
     return raw?.kind === "extra" && String(raw?.event_kind || "").toLowerCase() !== "makeup";
   }
@@ -305,21 +300,18 @@ export default function AttendanceStatusPage() {
     try {
       const nowIso = new Date().toISOString();
 
-      // ✅ 출석: present + attended_at 기록, 결석사유 제거
-      // ✅ DB 체크제약: present면 late_minutes가 NULL이면 안 됨 → 0으로 저장
       const { error } = await supabase
         .from("student_events")
         .update({
           attendance_status: "present",
           attended_at: nowIso,
-          late_minutes: 0, // ✅ FIX: 제약 통과
+          late_minutes: 0,
           absent_reason: null,
         })
         .eq("id", eventId);
 
       if (error) throw error;
 
-      // UI 반영
       setEvents((prev) =>
         prev.map((r) =>
           r.id === eventId
@@ -328,6 +320,9 @@ export default function AttendanceStatusPage() {
         )
       );
       setAbsentDraftById((p) => ({ ...p, [eventId]: "" }));
+
+      // ✅ 출석 처리하면 입력칸 닫기
+      setShowAbsentReasonForId((cur) => (cur === eventId ? null : cur));
     } catch (e) {
       setErr(e?.message || String(e));
     } finally {
@@ -347,7 +342,6 @@ export default function AttendanceStatusPage() {
 
     setSavingById((p) => ({ ...p, [eventId]: true }));
     try {
-      // ✅ 결석: absent + absent_reason 기록, attended_at 제거
       const { error } = await supabase
         .from("student_events")
         .update({
@@ -360,7 +354,6 @@ export default function AttendanceStatusPage() {
 
       if (error) throw error;
 
-      // UI 반영
       setEvents((prev) =>
         prev.map((r) =>
           r.id === eventId
@@ -368,6 +361,9 @@ export default function AttendanceStatusPage() {
             : r
         )
       );
+
+      // ✅ 저장 성공하면 입력칸 닫기
+      setShowAbsentReasonForId((cur) => (cur === eventId ? null : cur));
     } catch (e) {
       setErr(e?.message || String(e));
     } finally {
@@ -375,7 +371,6 @@ export default function AttendanceStatusPage() {
     }
   }
 
-  // ✅ 화면에 보여줄 row 만들기
   const visibleRows = useMemo(() => {
     const nameQ = (q || "").trim().toLowerCase();
 
@@ -393,36 +388,30 @@ export default function AttendanceStatusPage() {
 
         const isMakeup = r.kind === "extra" && r.event_kind === "makeup";
 
-        // 원결석/보강 정보
         const original = r.original_event_id ? byId.get(r.original_event_id) : null;
         const makeup = r.makeup_event_id ? byId.get(r.makeup_event_id) : null;
 
-        // ✅ 보강 종류 fallback용: 원결석 kind를 raw에 붙여줌
         const rawForLabel = isMakeup ? { ...r, __original_kind: original?.kind || "" } : r;
 
         const type = kindLabel(rawForLabel);
 
-        // 일대일 테스트시간(작게)
         let testHH = "";
         if (r.kind === "oto_class") {
           const key = `${r.student_id}__${r.event_date}__${r.season}`;
           testHH = testTimeKeyMap.get(key) || "";
         }
 
-        // 시간(정렬 기준도 start_time)
         const startHH = toHHMM(r.start_time);
 
-        // 보강일정보(원결석 row에서)
         let makeupInfo = "";
         if (makeup) {
           const md = makeup.event_date;
-          const mt = (makeup.makeup_time || "").trim(); // 보강 테스트 기준
-          const mc = toHHMM(makeup.start_time); // 보강 수업시간
+          const mt = (makeup.makeup_time || "").trim();
+          const mc = toHHMM(makeup.start_time);
           const mix = [mt ? `테스트 ${mt}` : "", mc ? `수업 ${mc}` : ""].filter(Boolean).join(" / ");
           makeupInfo = `보강: ${md}${mix ? ` (${mix})` : ""}`;
         }
 
-        // 원결석일정보(보강 row에서)
         let originalInfo = "";
         if (original) {
           const od = original.event_date;
@@ -437,11 +426,11 @@ export default function AttendanceStatusPage() {
           id: r.id,
           event_date: r.event_date,
           sort_time: startHH || "00:00",
-          raw: rawForLabel, // ✅ label 계산에 원결석kind 포함
+          raw: rawForLabel,
           st,
           type,
           isMakeup,
-          isExtraNormal: isExtraNormal(r), // ✅ 추가등원(보강 제외) 여부
+          isExtraNormal: isExtraNormal(r),
           startHH,
           testHH,
           status: statusLabel(r),
@@ -462,9 +451,8 @@ export default function AttendanceStatusPage() {
     return rows;
   }, [events, monthStart, monthEnd, q, byId, testTimeKeyMap]);
 
-  // ✅ 날짜별 그룹핑
   const grouped = useMemo(() => {
-    const g = new Map(); // date -> rows[]
+    const g = new Map();
     for (const r of visibleRows) {
       const arr = g.get(r.event_date) || [];
       arr.push(r);
@@ -567,8 +555,17 @@ export default function AttendanceStatusPage() {
     cursor: "pointer",
     whiteSpace: "nowrap",
   };
-  const smallBtnBlue = { ...smallBtn, background: "rgba(90,167,255,0.14)", border: "1px solid rgba(90,167,255,0.55)" };
-  const smallBtnRed = { ...smallBtn, background: "rgba(255,99,99,0.12)", border: "1px solid rgba(255,99,99,0.45)", color: "#b00020" };
+  const smallBtnBlue = {
+    ...smallBtn,
+    background: "rgba(90,167,255,0.14)",
+    border: "1px solid rgba(90,167,255,0.55)",
+  };
+  const smallBtnRed = {
+    ...smallBtn,
+    background: "rgba(255,99,99,0.12)",
+    border: "1px solid rgba(255,99,99,0.45)",
+    color: "#b00020",
+  };
 
   const reasonInput = {
     width: "100%",
@@ -636,7 +633,7 @@ export default function AttendanceStatusPage() {
             <div style={{ color: COLORS.sub, fontWeight: 900, padding: "14px 6px" }}>해당 월에 표시할 데이터가 없어요.</div>
           ) : (
             grouped.dates.map((dateIso) => {
-              const isCollapsed = collapsedByDate[dateIso] !== false; // default true
+              const isCollapsed = collapsedByDate[dateIso] !== false;
               const rows = grouped.g.get(dateIso) || [];
 
               return (
@@ -659,7 +656,6 @@ export default function AttendanceStatusPage() {
                     <div style={{ fontWeight: 1000, color: COLORS.sub }}>{isCollapsed ? "펼치기 ▼" : "접기 ▲"}</div>
                   </div>
 
-                  {/* 접힘이면 숨김 */}
                   {isCollapsed ? null : (
                     <div style={{ marginTop: 10 }}>
                       <div style={tableWrap}>
@@ -685,13 +681,13 @@ export default function AttendanceStatusPage() {
                               const e = r.raw;
                               const bg = rowBg(e);
 
-                              const canCheckExtra = r.isExtraNormal; // ✅ 추가등원(보강 제외)만
+                              const canCheckExtra = r.isExtraNormal;
                               const saving = !!savingById[r.id];
                               const draft = absentDraftById[r.id] ?? "";
+                              const showReasonHere = canCheckExtra && showAbsentReasonForId === r.id;
 
                               return (
                                 <tr key={r.id} style={{ background: bg }}>
-                                  {/* 시간 + (일대일이면 테스트시간 작은 글씨) */}
                                   <td style={{ ...tdStyle, fontWeight: 1000, textAlign: "center", whiteSpace: "normal" }}>
                                     <div>{r.startHH || "-"}</div>
                                     {r.testHH ? (
@@ -709,54 +705,80 @@ export default function AttendanceStatusPage() {
 
                                   <td style={{ ...tdStyle, textAlign: "center", fontWeight: 1000 }}>{r.type}</td>
 
-                                  {/* ✅ 출결: 추가등원(보강 제외)만 버튼 노출 */}
+                                  {/* ✅ 출결: 결석사유 입력란을 "결석 버튼 바로 아래"에 표시 */}
                                   <td style={{ ...tdStyle, textAlign: "center", whiteSpace: "normal" }}>
                                     {canCheckExtra ? (
                                       <div style={{ display: "flex", flexDirection: "column", gap: 6, alignItems: "center" }}>
                                         <div style={{ fontWeight: 1000 }}>{r.status}</div>
+
                                         <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap" }}>
                                           <button
                                             type="button"
                                             style={smallBtnBlue}
                                             disabled={saving}
-                                            onClick={() => markExtraPresent(r.id)}
+                                            onClick={() => {
+                                              // 다른 row의 입력칸 열려있으면 닫고, 이 row도 닫아줌
+                                              setShowAbsentReasonForId((cur) => (cur === r.id ? null : cur));
+                                              markExtraPresent(r.id);
+                                            }}
                                             title="추가등원 출석 처리"
                                           >
                                             출석
                                           </button>
+
                                           <button
                                             type="button"
                                             style={smallBtnRed}
                                             disabled={saving}
-                                            onClick={() => markExtraAbsent(r.id)}
+                                            onClick={() => {
+                                              // 1) 처음 누르면 입력칸 열기
+                                              if (showAbsentReasonForId !== r.id) {
+                                                setShowAbsentReasonForId(r.id);
+                                                return;
+                                              }
+                                              // 2) 입력칸이 열린 상태에서 다시 누르면 저장
+                                              markExtraAbsent(r.id);
+                                            }}
                                             title="추가등원 결석 처리 (사유 필수)"
                                           >
                                             결석
                                           </button>
                                         </div>
+
+                                        {showReasonHere ? (
+                                          <div style={{ width: "100%", marginTop: 2 }}>
+                                            <input
+                                              value={draft}
+                                              onChange={(ev) => setAbsentDraftById((p) => ({ ...p, [r.id]: ev.target.value }))}
+                                              onKeyDown={(ev) => {
+                                                if (ev.key === "Enter") markExtraAbsent(r.id);
+                                                if (ev.key === "Escape") setShowAbsentReasonForId(null);
+                                              }}
+                                              placeholder="결석 사유 입력 후 Enter"
+                                              style={reasonInput}
+                                              disabled={saving}
+                                              autoFocus
+                                            />
+                                            <div style={{ marginTop: 6, fontSize: 11, color: COLORS.sub, fontWeight: 900 }}>
+                                              · Enter = 결석 저장 / Esc = 닫기
+                                            </div>
+                                          </div>
+                                        ) : null}
                                       </div>
                                     ) : (
                                       <div style={{ fontWeight: 1000 }}>{r.status}</div>
                                     )}
                                   </td>
 
-                                  <td style={{ ...tdStyle, color: r.punctual ? COLORS.text : COLORS.sub, fontWeight: 900 }}>{r.punctual || "-"}</td>
+                                  <td style={{ ...tdStyle, color: r.punctual ? COLORS.text : COLORS.sub, fontWeight: 900 }}>
+                                    {r.punctual || "-"}
+                                  </td>
 
-                                  {/* ✅ 결석사유: 추가등원(보강 제외)만 입력 가능 */}
-                                  <td style={{ ...tdStyle, whiteSpace: "normal", overflow: "visible" /* ✅ FIX: input이 셀에서 안 보이던 문제 방지 */ }}>
-                                    {canCheckExtra ? (
-                                      <input
-                                        value={draft}
-                                        onChange={(ev) => setAbsentDraftById((p) => ({ ...p, [r.id]: ev.target.value }))}
-                                        placeholder="결석 사유 입력"
-                                        style={reasonInput}
-                                        disabled={saving}
-                                      />
-                                    ) : (
-                                      <div style={{ color: r.absentReason ? COLORS.text : COLORS.sub, fontWeight: 900 }}>
-                                        {r.absentReason || "-"}
-                                      </div>
-                                    )}
+                                  {/* ✅ 결석사유 컬럼: 이제 "입력칸"이 아니라 "저장된 사유"만 보여줌 */}
+                                  <td style={{ ...tdStyle, whiteSpace: "normal" }}>
+                                    <div style={{ color: r.absentReason ? COLORS.text : COLORS.sub, fontWeight: 900 }}>
+                                      {r.absentReason || "-"}
+                                    </div>
                                   </td>
 
                                   <td style={{ ...tdStyle, color: r.makeupInfo ? COLORS.text : COLORS.sub, fontWeight: 900, whiteSpace: "normal" }}>
@@ -776,7 +798,8 @@ export default function AttendanceStatusPage() {
                       <div style={{ marginTop: 8, color: COLORS.sub, fontSize: 12, fontWeight: 900 }}>
                         · 색상: 출석(연파랑) / 결석(연빨강) / 보강 미처리(연노랑)
                         <br />
-                        · 이 화면에서 출결 버튼은 <b>추가등원(보강 제외)</b>만 가능합니다. (결석은 사유 입력 후 “결석” 클릭)
+                        · 이 화면에서 출결 버튼은 <b>추가등원(보강 제외)</b>만 가능합니다.
+                        (결석은 “결석” 클릭 → 사유 입력 → Enter 또는 “결석” 재클릭)
                       </div>
                     </div>
                   )}
