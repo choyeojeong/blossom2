@@ -488,11 +488,16 @@ export default function StudentsPage() {
         saved = data;
       }
 
-      // extras 동기화(시즌별 기존 삭제 후 삽입)
+      // ✅ extras 동기화(시즌별 기존 삭제 후 삽입)
       const syncSeason = async (season, extrasMap) => {
-        const sid = saved.id;
+        const sid = saved?.id;
 
-        const { error: delErr } = await supabase.from("student_extra_rules").delete().eq("student_id", sid).eq("season", season);
+        // ✅ 핵심: sid/season이 비정상이면 DELETE 자체를 막아서 "WHERE clause" 에러 원천 차단
+        if (!sid) throw new Error("저장된 학생 id가 없습니다. (saved.id)");
+        if (season !== "term" && season !== "winter") throw new Error(`잘못된 season 값: ${season}`);
+
+        // ✅ 더 안전한 match 사용 (조건 누락 가능성 최소화)
+        const { error: delErr } = await supabase.from("student_extra_rules").delete().match({ student_id: sid, season });
         if (delErr) throw delErr;
 
         const entries = Object.keys(extrasMap || {})
