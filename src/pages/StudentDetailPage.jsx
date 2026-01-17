@@ -370,29 +370,20 @@ export default function StudentDetailPage() {
         .single();
       if (stuErr) throw stuErr;
 
-      const { data: extra } = await supabase.from("student_extra_rules").select("weekday, kind").eq("student_id", studentId);
+      // ✅ FIX: student_extra_rules는 (season, weekday, class_time) 구조여서 kind 필터링하면 빈 배열이 될 수 있음
+      //         -> weekday만 가져와서 전부 "추가등원 요일"로 합산
+      const { data: extra, error: extraErr } = await supabase.from("student_extra_rules").select("weekday").eq("student_id", studentId);
+      if (extraErr) throw extraErr;
 
-      // ✅ (수정) 추가등원 kind 표기 차이(extra / extra_attendance / extra_class 등) + weekday 0-based 방어
-      const extraWeekdays = (extra || [])
-        .filter((r) => {
-          const k = String(r?.kind || "").toLowerCase().trim();
-          return k === "extra" || k === "extra_attendance" || k === "extra_class";
-        })
-        .map((r) => {
-          let n = Number(r?.weekday);
-
-          // weekday가 문자열/빈값이면 skip
-          if (!Number.isFinite(n)) return null;
-
-          // 방어: 0~5(월~토)로 저장된 경우 → 1~6으로 변환
-          // 이미 1~6이면 그대로
-          if (n >= 1 && n <= 6) return n;
-          if (n >= 0 && n <= 5) return n + 1;
-
-          // 그 외 값은 버림
-          return null;
-        })
-        .filter((n) => Number.isFinite(n) && n >= 1 && n <= 6);
+      // ✅ weekday 0-based(0~5) 저장 방어 + 1~6 정상값 허용 + 중복 제거
+      const set = new Set();
+      for (const r of extra || []) {
+        let n = Number(r?.weekday);
+        if (!Number.isFinite(n)) continue;
+        if (n >= 1 && n <= 6) set.add(n);
+        else if (n >= 0 && n <= 5) set.add(n + 1);
+      }
+      const extraWeekdays = Array.from(set);
 
       setStudent({ ...stu, __extraWeekdays: extraWeekdays });
 
@@ -442,7 +433,6 @@ export default function StudentDetailPage() {
 
     if (error) return;
 
-    // ✅ 보강의 원본 종류(일대일/독해)를 알기 위해 original_event_id들을 추가 조회
     const originalIds = Array.from(
       new Set(
         (data || [])
@@ -478,7 +468,7 @@ export default function StudentDetailPage() {
         const mt = normalizeMakeupType(r, originalKindById);
         if (mt === "oto") map[d].makeupTypes.add("makeup_oto");
         else if (mt === "reading") map[d].makeupTypes.add("makeup_reading");
-        else map[d].makeupTypes.add("makeup"); // fallback
+        else map[d].makeupTypes.add("makeup");
       } else {
         map[d].normal.push(r);
         map[d].normalKinds.add(k);
@@ -501,8 +491,6 @@ export default function StudentDetailPage() {
         else if (normalStatuses.includes("attended")) status = "attended";
       }
 
-      // ✅ 달력 칩용 kind 집합 구성:
-      // - 정상 수업 kind + (보강이면 makeup_oto / makeup_reading 등)
       const kinds = new Set();
       for (const nk of bucket.normalKinds || []) kinds.add(nk);
       for (const mk of bucket.makeupTypes || []) kinds.add(mk);
@@ -630,11 +618,7 @@ export default function StudentDetailPage() {
     }
   }
 
-  // ✅ (수정) upsert(INSERT ON CONFLICT)로 order_index만 보내면 NOT NULL(student_id) 제약에 걸릴 수 있어서
-  //          order_index 재정렬은 "각 row update"로 안전하게 처리
   async function persistOrderIndexUpdates(patched) {
-    // patched: [{id, order_index}, ...]
-    // NOTE: 최소 변경을 위해 RPC/트랜잭션 대신 Promise.all 업데이트 사용
     const jobs = (patched || [])
       .filter((x) => x?.id)
       .map((x) => supabase.from("student_todos").update({ order_index: x.order_index }).eq("id", x.id));
@@ -661,7 +645,6 @@ export default function StudentDetailPage() {
 
     setErr("");
     try {
-      // ✅ (수정) upsert 제거 → update로만 저장
       await persistOrderIndexUpdates(patched.map((x) => ({ id: x.id, order_index: x.order_index })));
     } catch (e) {
       setErr(e?.message || String(e));
@@ -692,7 +675,6 @@ export default function StudentDetailPage() {
     try {
       const fromPatched = fromArr.map((x, i) => ({ id: x.id, order_index: i }));
 
-      // ✅ (수정) upsert 제거 → update로만 저장
       if (fromPatched.length) {
         await persistOrderIndexUpdates(fromPatched);
       }
@@ -1005,7 +987,7 @@ export default function StudentDetailPage() {
 
   const todoItem = {
     display: "flex",
-    alignItems: "center",
+    alignItems: "flex-start", // ✅ 여러 줄일 때 자연스럽게
     gap: 8,
     padding: "8px 9px",
     borderRadius: 12,
@@ -1015,15 +997,13 @@ export default function StudentDetailPage() {
     userSelect: "none",
   };
 
-  const todoTextTwoLine = {
+  // ✅ FIX: 2줄 제한 제거 → 길어져도 계속 자동 줄바꿈
+  const todoTextWrap = {
     fontWeight: 700,
     fontSize: 12.5,
     lineHeight: 1.25,
-    whiteSpace: "normal",
-    overflow: "hidden",
-    display: "-webkit-box",
-    WebkitBoxOrient: "vertical",
-    WebkitLineClamp: 2,
+    whiteSpace: "pre-wrap",
+    wordBreak: "break-word",
   };
 
   const inputWeight = 700;
@@ -1252,7 +1232,7 @@ export default function StudentDetailPage() {
                                     autoFocus
                                   />
                                 ) : (
-                                  <div style={todoTextTwoLine}>{t.text}</div>
+                                  <div style={todoTextWrap}>{t.text}</div>
                                 )}
                               </div>
 

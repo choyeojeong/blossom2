@@ -27,6 +27,9 @@ const TERM_SLOTS = ["15:20", "16:00", "16:40", "17:20", "18:00", "18:40", "19:20
 // ✅ 겨울방학 고정 슬롯
 const WINTER_SLOTS = ["12:20", "13:00", "13:40", "14:20", "15:00", "15:40", "16:20", "17:00", "17:40", "18:20"];
 
+// ✅ 토요일 고정 슬롯 (학기중/방학 동일)
+const SATURDAY_SLOTS = ["10:20", "11:00", "11:40", "12:20", "13:00", "14:00", "14:40", "15:20", "16:00", "16:40"];
+
 function pad2(n) {
   return String(n).padStart(2, "0");
 }
@@ -164,6 +167,10 @@ export default function OneToOneSchedulePage() {
   });
 
   const fixedSlots = useMemo(() => {
+    // ✅ 토요일이면 학기/방학 무관하게 토요일 슬롯 사용
+    const dow = parseISODate(selectedDate).getDay(); // 0=일 ... 6=토
+    if (dow === 6) return SATURDAY_SLOTS;
+
     const isWinter = isoInRange(selectedDate, WINTER_FROM, WINTER_TO);
     return isWinter ? WINTER_SLOTS : TERM_SLOTS;
   }, [selectedDate]);
