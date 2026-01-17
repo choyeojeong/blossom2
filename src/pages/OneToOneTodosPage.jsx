@@ -1,6 +1,6 @@
 // src/pages/OneToOneTodosPage.jsx
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 import dayjs from "dayjs";
 import "dayjs/locale/ko";
 import { supabase } from "../utils/supabaseClient";
@@ -24,7 +24,6 @@ const COLORS = {
 };
 
 export default function OneToOneTodosPage() {
-  const nav = useNavigate();
   const { teacherName } = useParams();
 
   const [dateStr, setDateStr] = useState(dayjs().format("YYYY-MM-DD"));
@@ -127,74 +126,27 @@ export default function OneToOneTodosPage() {
 
     const channel = supabase
       .channel(`rt-oto-todos-${safeTeacher}`)
-      .on("postgres_changes", { event: "*", schema: "public", table: TABLE }, (payload) => {
-        const type = payload.eventType;
-        const nextRow = payload.new;
-        const oldRow = payload.old;
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: TABLE },
+        (payload) => {
+          const type = payload.eventType;
+          const nextRow = payload.new;
+          const oldRow = payload.old;
 
-        const ids = studentIdsRef.current;
-        const isMineStudent = (sid) => !!sid && ids && ids.has(sid);
+          const ids = studentIdsRef.current;
+          const isMineStudent = (sid) => !!sid && ids && ids.has(sid);
 
-        const isCurrentDate = (d) => String(d || "") === String(dateStr || "");
+          const isCurrentDate = (d) => String(d || "") === String(dateStr || "");
 
-        if (type === "INSERT") {
-          if (!isMineStudent(nextRow?.student_id)) return;
-          if (!isCurrentDate(nextRow?.todo_date)) return;
+          if (type === "INSERT") {
+            if (!isMineStudent(nextRow?.student_id)) return;
+            if (!isCurrentDate(nextRow?.todo_date)) return;
 
-          setTodos((arr) => {
-            const exists = arr.some((x) => x.id === nextRow.id);
-            if (exists) return arr;
-            const merged = [...arr, nextRow];
-            merged.sort((a, b) => {
-              const ao = a.order_index ?? 0;
-              const bo = b.order_index ?? 0;
-              if (ao !== bo) return ao - bo;
-              const ac = a.created_at ? new Date(a.created_at).getTime() : 0;
-              const bc = b.created_at ? new Date(b.created_at).getTime() : 0;
-              return ac - bc;
-            });
-            return merged;
-          });
-
-          setEditMap((m) => ({ ...m, [nextRow.id]: (nextRow.text ?? "").toString() }));
-          return;
-        }
-
-        if (type === "UPDATE") {
-          const oldSid = oldRow?.student_id;
-          const newSid = nextRow?.student_id;
-
-          const wasMine = isMineStudent(oldSid);
-          const isMine = isMineStudent(newSid);
-
-          const oldDate = oldRow?.todo_date;
-          const newDate = nextRow?.todo_date;
-
-          const shouldRemove =
-            (wasMine && isCurrentDate(oldDate) && (!isMine || !isCurrentDate(newDate))) ||
-            (isMineStudent(oldSid) && isCurrentDate(oldDate) && !isCurrentDate(newDate));
-
-          if (shouldRemove) {
-            setTodos((arr) => arr.filter((x) => x.id !== oldRow.id));
-            setEditMap((m) => {
-              const next = { ...m };
-              delete next[oldRow.id];
-              return next;
-            });
-          }
-
-          const shouldUpsert = isMine && isCurrentDate(newDate);
-
-          if (shouldUpsert) {
             setTodos((arr) => {
-              const idx = arr.findIndex((x) => x.id === nextRow.id);
-              let merged;
-              if (idx >= 0) {
-                merged = [...arr];
-                merged[idx] = { ...merged[idx], ...nextRow };
-              } else {
-                merged = [...arr, nextRow];
-              }
+              const exists = arr.some((x) => x.id === nextRow.id);
+              if (exists) return arr;
+              const merged = [...arr, nextRow];
               merged.sort((a, b) => {
                 const ao = a.order_index ?? 0;
                 const bo = b.order_index ?? 0;
@@ -206,25 +158,82 @@ export default function OneToOneTodosPage() {
               return merged;
             });
 
-            setEditMap((m) => ({ ...m, [nextRow.id]: (nextRow.text ?? "").toString() }));
+            setEditMap((m) => ({
+              ...m,
+              [nextRow.id]: (nextRow.text ?? "").toString(),
+            }));
+            return;
           }
 
-          return;
-        }
+          if (type === "UPDATE") {
+            const oldSid = oldRow?.student_id;
+            const newSid = nextRow?.student_id;
 
-        if (type === "DELETE") {
-          if (!isMineStudent(oldRow?.student_id)) return;
-          if (!isCurrentDate(oldRow?.todo_date)) return;
+            const wasMine = isMineStudent(oldSid);
+            const isMine = isMineStudent(newSid);
 
-          setTodos((arr) => arr.filter((x) => x.id !== oldRow.id));
-          setEditMap((m) => {
-            const next = { ...m };
-            delete next[oldRow.id];
-            return next;
-          });
-          return;
+            const oldDate = oldRow?.todo_date;
+            const newDate = nextRow?.todo_date;
+
+            const shouldRemove =
+              (wasMine && isCurrentDate(oldDate) && (!isMine || !isCurrentDate(newDate))) ||
+              (isMineStudent(oldSid) && isCurrentDate(oldDate) && !isCurrentDate(newDate));
+
+            if (shouldRemove) {
+              setTodos((arr) => arr.filter((x) => x.id !== oldRow.id));
+              setEditMap((m) => {
+                const next = { ...m };
+                delete next[oldRow.id];
+                return next;
+              });
+            }
+
+            const shouldUpsert = isMine && isCurrentDate(newDate);
+
+            if (shouldUpsert) {
+              setTodos((arr) => {
+                const idx = arr.findIndex((x) => x.id === nextRow.id);
+                let merged;
+                if (idx >= 0) {
+                  merged = [...arr];
+                  merged[idx] = { ...merged[idx], ...nextRow };
+                } else {
+                  merged = [...arr, nextRow];
+                }
+                merged.sort((a, b) => {
+                  const ao = a.order_index ?? 0;
+                  const bo = b.order_index ?? 0;
+                  if (ao !== bo) return ao - bo;
+                  const ac = a.created_at ? new Date(a.created_at).getTime() : 0;
+                  const bc = b.created_at ? new Date(b.created_at).getTime() : 0;
+                  return ac - bc;
+                });
+                return merged;
+              });
+
+              setEditMap((m) => ({
+                ...m,
+                [nextRow.id]: (nextRow.text ?? "").toString(),
+              }));
+            }
+
+            return;
+          }
+
+          if (type === "DELETE") {
+            if (!isMineStudent(oldRow?.student_id)) return;
+            if (!isCurrentDate(oldRow?.todo_date)) return;
+
+            setTodos((arr) => arr.filter((x) => x.id !== oldRow.id));
+            setEditMap((m) => {
+              const next = { ...m };
+              delete next[oldRow.id];
+              return next;
+            });
+            return;
+          }
         }
-      })
+      )
       .subscribe();
 
     return () => {
@@ -314,7 +323,9 @@ export default function OneToOneTodosPage() {
       setErr("");
 
       const current = todosByStudent.get(studentId) || [];
-      const nextOrder = current.length ? Math.max(...current.map((x) => x.order_index ?? 0)) + 1 : 0;
+      const nextOrder = current.length
+        ? Math.max(...current.map((x) => x.order_index ?? 0)) + 1
+        : 0;
 
       const payload = { student_id: studentId, todo_date: dateStr, text, order_index: nextOrder };
 
@@ -354,7 +365,7 @@ export default function OneToOneTodosPage() {
     border: `1px solid ${COLORS.lineSoft}`,
     background: "rgba(255,255,255,0.60)",
     borderRadius: 14,
-    padding: 10, // ✅ 줄임
+    padding: 10,
     minWidth: 0,
   };
 
@@ -362,43 +373,30 @@ export default function OneToOneTodosPage() {
     color: COLORS.blue,
     textDecoration: "underline",
     fontWeight: 900,
-    fontSize: 15, // ✅ 줄임
+    fontSize: 15,
     whiteSpace: "nowrap",
     overflow: "hidden",
     textOverflow: "ellipsis",
   };
 
   const subLine = {
-    fontSize: 11.5, // ✅ 줄임
+    fontSize: 11.5,
     color: COLORS.sub,
     whiteSpace: "nowrap",
     overflow: "hidden",
     textOverflow: "ellipsis",
   };
 
-  const tinyPillBtn = {
-    border: `1px solid ${COLORS.line}`,
-    background: "rgba(255,255,255,0.75)",
-    borderRadius: 999,
-    padding: "6px 9px",
-    cursor: "pointer",
-    fontWeight: 900,
-    color: COLORS.text,
-    fontSize: 12,
-    whiteSpace: "nowrap",
-    flex: "0 0 auto",
-  };
-
-  const todoBox = {
-    border: `1px solid ${COLORS.lineSoft}`,
-    background: "rgba(255,255,255,0.55)",
-    borderRadius: 12,
-    padding: 8, // ✅ 줄임
+  const todoRow = {
+    display: "grid",
+    gridTemplateColumns: "1fr auto",
+    gap: 6,
+    alignItems: "center",
   };
 
   const input = {
     width: "100%",
-    height: 34, // ✅ 줄임
+    height: 34,
     padding: "0 9px",
     borderRadius: 10,
     border: `1px solid ${COLORS.line}`,
@@ -407,19 +405,29 @@ export default function OneToOneTodosPage() {
     fontWeight: 700,
     color: COLORS.text,
     outline: "none",
+    minWidth: 0,
   };
 
-  const btnSmall = (bg, color) => ({
-    height: 34, // ✅ 줄임
-    padding: "0 10px",
-    borderRadius: 10,
-    border: `1px solid ${COLORS.line}`,
-    background: bg,
-    color,
-    fontWeight: 900,
-    cursor: "pointer",
-    flex: 1, // ✅ 2개 버튼이 반반
-  });
+  const iconBtn = (tone = "save", disabled = false) => {
+    const bg = tone === "save" ? "rgba(47,111,237,0.12)" : "rgba(180,35,24,0.10)";
+    const bd = `1px solid ${COLORS.line}`;
+    const color = tone === "save" ? COLORS.text : COLORS.danger;
+    return {
+      width: 30,
+      height: 30,
+      borderRadius: 10,
+      border: bd,
+      background: bg,
+      color,
+      fontWeight: 900,
+      cursor: disabled ? "not-allowed" : "pointer",
+      opacity: disabled ? 0.55 : 1,
+      display: "inline-flex",
+      alignItems: "center",
+      justifyContent: "center",
+      userSelect: "none",
+    };
+  };
 
   const addRow = {
     marginTop: 8,
@@ -427,6 +435,19 @@ export default function OneToOneTodosPage() {
     gridTemplateColumns: "1fr auto",
     gap: 8,
   };
+
+  const addBtn = (disabled) => ({
+    height: 36,
+    padding: "0 10px",
+    borderRadius: 12,
+    border: `1px solid ${COLORS.line}`,
+    background: "rgba(47,111,237,0.12)",
+    color: COLORS.text,
+    fontWeight: 900,
+    cursor: disabled ? "not-allowed" : "pointer",
+    opacity: disabled ? 0.6 : 1,
+    whiteSpace: "nowrap",
+  });
 
   return (
     <div
@@ -452,7 +473,9 @@ export default function OneToOneTodosPage() {
           <div>
             <div style={{ fontSize: 22, fontWeight: 900, letterSpacing: -0.2 }}>날짜별 할일보기</div>
             <div style={{ marginTop: 6, fontSize: 13, color: COLORS.sub }}>
-              {safeTeacher ? `${safeTeacher} 선생님 학생들의 할일을 날짜별로 모아봅니다.` : "선생님 학생들의 할일을 날짜별로 모아봅니다."}
+              {safeTeacher
+                ? `${safeTeacher} 선생님 학생들의 할일을 날짜별로 모아봅니다.`
+                : "선생님 학생들의 할일을 날짜별로 모아봅니다."}
             </div>
           </div>
 
@@ -537,12 +560,16 @@ export default function OneToOneTodosPage() {
           {loading ? (
             <div style={{ padding: "14px 0", color: COLORS.sub }}>불러오는 중…</div>
           ) : students.length === 0 ? (
-            <div style={{ padding: "14px 0", color: COLORS.sub }}>표시할 학생이 없어요. (해당 선생님 + 퇴원하지 않은 학생 없음)</div>
+            <div style={{ padding: "14px 0", color: COLORS.sub }}>
+              표시할 학생이 없어요. (해당 선생님 + 퇴원하지 않은 학생 없음)
+            </div>
           ) : visibleStudents.length === 0 ? (
-            <div style={{ padding: "14px 0", color: COLORS.sub }}>이 날짜에 할 일이 있는 학생이 없어요. (날짜를 바꿔보세요)</div>
+            <div style={{ padding: "14px 0", color: COLORS.sub }}>
+              이 날짜에 할 일이 있는 학생이 없어요. (날짜를 바꿔보세요)
+            </div>
           ) : (
             <>
-              {/* ✅ “카드 자체를 작게” + 그리드 3~4열 */}
+              {/* ✅ 카드 작게 + 그리드 3~4열 */}
               <style>{`
                 .oto-mini-grid { display:grid; gap:12px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
                 @media (min-width: 980px)  { .oto-mini-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
@@ -556,73 +583,63 @@ export default function OneToOneTodosPage() {
 
                   return (
                     <div key={s.id} style={card}>
-                      {/* 학생 헤더(컴팩트) */}
-                      <div
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "space-between",
-                          gap: 8,
-                          marginBottom: 8,
-                        }}
-                      >
-                        <div style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: 3 }}>
-                          <Link to={`/students/${s.id}`} style={nameLink} title="학생 상세로 이동">
-                            {s.name}
-                          </Link>
-                          <div style={subLine}>
-                            {s.school || "-"} · {s.grade || "-"}
-                          </div>
+                      {/* 학생 헤더: 이름 클릭만으로 상세 이동 */}
+                      <div style={{ display: "flex", flexDirection: "column", gap: 3, marginBottom: 8 }}>
+                        <Link to={`/students/${s.id}`} style={nameLink} title="학생 상세로 이동">
+                          {s.name}
+                        </Link>
+                        <div style={subLine}>
+                          {s.school || "-"} · {s.grade || "-"}
                         </div>
-
-                        <button type="button" onClick={() => nav(`/students/${s.id}`)} style={tinyPillBtn}>
-                          상세 →
-                        </button>
                       </div>
 
-                      {/* 할일 목록(컴팩트) */}
+                      {/* 할일 목록: 저장/삭제 아이콘을 할일 옆에 */}
                       <div style={{ display: "grid", gap: 8 }}>
                         {list.map((t) => {
                           const isBusy = busyKey === t.id;
                           const val = editMap[t.id] ?? t.text ?? "";
 
                           return (
-                            <div key={t.id} style={todoBox}>
-                              <input
-                                value={val}
-                                onChange={(e) => setEdit(t.id, e.target.value)}
-                                placeholder="할일"
-                                style={input}
-                              />
+                            <div
+                              key={t.id}
+                              style={{
+                                border: `1px solid ${COLORS.lineSoft}`,
+                                background: "rgba(255,255,255,0.55)",
+                                borderRadius: 12,
+                                padding: 8,
+                              }}
+                            >
+                              <div style={todoRow}>
+                                <input
+                                  value={val}
+                                  onChange={(e) => setEdit(t.id, e.target.value)}
+                                  placeholder="할일"
+                                  style={input}
+                                />
 
-                              <div style={{ display: "flex", gap: 6, alignItems: "center", marginTop: 7 }}>
-                                <button
-                                  type="button"
-                                  disabled={isBusy}
-                                  onClick={() => saveTodo(t)}
-                                  style={{
-                                    ...btnSmall(COLORS.blueSoft, COLORS.text),
-                                    cursor: isBusy ? "not-allowed" : "pointer",
-                                    opacity: isBusy ? 0.6 : 1,
-                                  }}
-                                  title="저장"
-                                >
-                                  저장
-                                </button>
+                                <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                                  <button
+                                    type="button"
+                                    disabled={isBusy}
+                                    onClick={() => saveTodo(t)}
+                                    style={iconBtn("save", isBusy)}
+                                    title="저장"
+                                    aria-label="저장"
+                                  >
+                                    ✓
+                                  </button>
 
-                                <button
-                                  type="button"
-                                  disabled={isBusy}
-                                  onClick={() => deleteTodo(t)}
-                                  style={{
-                                    ...btnSmall(COLORS.dangerSoft, COLORS.danger),
-                                    cursor: isBusy ? "not-allowed" : "pointer",
-                                    opacity: isBusy ? 0.6 : 1,
-                                  }}
-                                  title="삭제"
-                                >
-                                  삭제
-                                </button>
+                                  <button
+                                    type="button"
+                                    disabled={isBusy}
+                                    onClick={() => deleteTodo(t)}
+                                    style={iconBtn("del", isBusy)}
+                                    title="삭제"
+                                    aria-label="삭제"
+                                  >
+                                    ✕
+                                  </button>
+                                </div>
                               </div>
                             </div>
                           );
@@ -644,18 +661,7 @@ export default function OneToOneTodosPage() {
                           type="button"
                           onClick={() => addTodo(s.id)}
                           disabled={busyKey === `add:${s.id}`}
-                          style={{
-                            height: 36,
-                            padding: "0 10px",
-                            borderRadius: 12,
-                            border: `1px solid ${COLORS.line}`,
-                            background: "rgba(47,111,237,0.12)",
-                            color: COLORS.text,
-                            fontWeight: 900,
-                            cursor: busyKey === `add:${s.id}` ? "not-allowed" : "pointer",
-                            opacity: busyKey === `add:${s.id}` ? 0.6 : 1,
-                            whiteSpace: "nowrap",
-                          }}
+                          style={addBtn(busyKey === `add:${s.id}`)}
                         >
                           + 추가
                         </button>
