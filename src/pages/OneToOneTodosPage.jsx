@@ -123,7 +123,6 @@ export default function OneToOneTodosPage() {
 
   // ✅ Realtime: StudentDetailPage에서 수정/삭제/추가/이동/순서변경한 것도 즉시 반영
   useEffect(() => {
-    // 선생님/학생 로딩 전에 구독해도 되지만, 여기서는 안전하게 teacherName이 있을 때만
     if (!safeTeacher) return;
 
     const channel = supabase
@@ -165,7 +164,6 @@ export default function OneToOneTodosPage() {
 
         // 2) UPDATE
         if (type === "UPDATE") {
-          // 기존 row가 내 학생이면, 일단 todos 배열에서 업데이트/제거 여부 판단
           const oldSid = oldRow?.student_id;
           const newSid = nextRow?.student_id;
 
@@ -175,10 +173,8 @@ export default function OneToOneTodosPage() {
           const oldDate = oldRow?.todo_date;
           const newDate = nextRow?.todo_date;
 
-          // (A) 기존에 리스트에 있던 항목이 날짜 변경/학생 변경으로 "빠져야" 하는 경우
           const shouldRemove =
             (wasMine && isCurrentDate(oldDate) && (!isMine || !isCurrentDate(newDate))) ||
-            // 혹시 oldRow 정보가 없더라도 현재 dateStr와 다르면 제거 후보
             (isMineStudent(oldSid) && isCurrentDate(oldDate) && !isCurrentDate(newDate));
 
           if (shouldRemove) {
@@ -190,7 +186,6 @@ export default function OneToOneTodosPage() {
             });
           }
 
-          // (B) 새 상태가 "현재 페이지에 들어와야" 하는 경우 (날짜/학생 OK)
           const shouldUpsert = isMine && isCurrentDate(newDate);
 
           if (shouldUpsert) {
@@ -250,6 +245,11 @@ export default function OneToOneTodosPage() {
     return map;
   }, [todos]);
 
+  // ✅ 이 날짜에 할일이 있는 학생만 노출
+  const visibleStudents = useMemo(() => {
+    return (students || []).filter((s) => (todosByStudent.get(s.id) || []).length > 0);
+  }, [students, todosByStudent]);
+
   const titleDateLabel = useMemo(() => {
     const d = dayjs(dateStr);
     const today = dayjs().format("YYYY-MM-DD");
@@ -276,7 +276,6 @@ export default function OneToOneTodosPage() {
       setErr("");
 
       const { error } = await supabase.from(TABLE).update({ text }).eq("id", todo.id);
-
       if (error) throw error;
 
       setTodos((arr) => arr.map((r) => (r.id === todo.id ? { ...r, text } : r)));
@@ -310,6 +309,8 @@ export default function OneToOneTodosPage() {
     }
   }
 
+  // ✅ (현재 UI에서는 “할일 없는 학생은 안 보임”이므로, 카드 내부에서만 "추가" 제공하지 않게 처리)
+  // 필요하면 상단에 “할일 추가” 전용 섹션을 따로 만들면 됨.
   async function addTodo(studentId) {
     const text = (addMap[studentId] ?? "").trim();
     if (!text) return;
@@ -321,12 +322,7 @@ export default function OneToOneTodosPage() {
       const current = todosByStudent.get(studentId) || [];
       const nextOrder = current.length ? Math.max(...current.map((x) => x.order_index ?? 0)) + 1 : 0;
 
-      const payload = {
-        student_id: studentId,
-        todo_date: dateStr,
-        text,
-        order_index: nextOrder,
-      };
+      const payload = { student_id: studentId, todo_date: dateStr, text, order_index: nextOrder };
 
       const { data, error } = await supabase
         .from(TABLE)
@@ -357,6 +353,13 @@ export default function OneToOneTodosPage() {
     }
   }
 
+  // ✅ 카드 그리드(가로 3~4개 가시성 좋게)
+  const cardsGridStyle = {
+    display: "grid",
+    gap: 12,
+    gridTemplateColumns: "repeat(1, minmax(0, 1fr))",
+  };
+
   return (
     <div
       style={{
@@ -366,7 +369,7 @@ export default function OneToOneTodosPage() {
         padding: `calc(env(safe-area-inset-top, 0px) + 16px) 16px calc(env(safe-area-inset-bottom, 0px) + 18px)`,
       }}
     >
-      <div style={{ width: "min(1020px, 100%)", margin: "0 auto" }}>
+      <div style={{ width: "min(1400px, 100%)", margin: "0 auto" }}>
         {/* 헤더 */}
         <div
           style={{
@@ -375,6 +378,7 @@ export default function OneToOneTodosPage() {
             justifyContent: "space-between",
             gap: 12,
             marginBottom: 10,
+            flexWrap: "wrap",
           }}
         >
           <div>
@@ -388,7 +392,6 @@ export default function OneToOneTodosPage() {
             type="button"
             onClick={() => {
               loadStudents();
-              // 학생 재로드 후, useEffect로 해당 날짜 todo 재로드됨
             }}
             style={{
               border: `1px solid ${COLORS.line}`,
@@ -416,11 +419,12 @@ export default function OneToOneTodosPage() {
             border: `1px solid ${COLORS.lineSoft}`,
             borderRadius: 14,
             background: "rgba(255,255,255,0.55)",
+            flexWrap: "wrap",
           }}
         >
           <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
             <div style={{ fontSize: 15, fontWeight: 900 }}>{titleDateLabel}</div>
-            <div style={{ fontSize: 12, color: COLORS.sub }}>날짜를 바꾸면 해당 날짜의 할일만 표시돼요.</div>
+            <div style={{ fontSize: 12, color: COLORS.sub }}>날짜를 바꾸면 해당 날짜의 할일만 표시돼요. (할 일이 없는 학생은 숨김)</div>
           </div>
 
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -468,206 +472,235 @@ export default function OneToOneTodosPage() {
             <div style={{ padding: "14px 0", color: COLORS.sub }}>불러오는 중…</div>
           ) : students.length === 0 ? (
             <div style={{ padding: "14px 0", color: COLORS.sub }}>표시할 학생이 없어요. (해당 선생님 + 퇴원하지 않은 학생 없음)</div>
+          ) : visibleStudents.length === 0 ? (
+            <div style={{ padding: "14px 0", color: COLORS.sub }}>
+              이 날짜에 할 일이 있는 학생이 없어요. (날짜를 바꿔보세요)
+            </div>
           ) : (
-            <div style={{ display: "grid", gap: 12 }}>
-              {students.map((s) => {
-                const list = todosByStudent.get(s.id) || [];
+            <>
+              {/* ✅ 반응형: 모바일 1, 태블릿 2, 데스크탑 3, 큰 화면 4 */}
+              <div
+                style={{
+                  ...cardsGridStyle,
+                  gridTemplateColumns: "repeat(1, minmax(0, 1fr))",
+                }}
+              >
+                <style>{`
+                  @media (min-width: 700px) {
+                    .oto-todo-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+                  }
+                  @media (min-width: 1024px) {
+                    .oto-todo-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+                  }
+                  @media (min-width: 1320px) {
+                    .oto-todo-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+                  }
+                `}</style>
 
-                return (
-                  <div
-                    key={s.id}
-                    style={{
-                      border: `1px solid ${COLORS.lineSoft}`,
-                      background: "rgba(255,255,255,0.60)",
-                      borderRadius: 16,
-                      padding: 12,
-                    }}
-                  >
-                    {/* 학생 헤더 */}
-                    <div
-                      style={{
-                        display: "flex",
-                        alignItems: "baseline",
-                        justifyContent: "space-between",
-                        gap: 10,
-                        marginBottom: 10,
-                      }}
-                    >
-                      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                        <Link
-                          to={`/students/${s.id}`}
+                <div className="oto-todo-grid" style={{ display: "grid", gap: 12, gridTemplateColumns: "repeat(1, minmax(0, 1fr))" }}>
+                  {visibleStudents.map((s) => {
+                    const list = todosByStudent.get(s.id) || [];
+                    if (!list.length) return null; // ✅ 이 날짜 할일 없는 학생 숨김(안전)
+
+                    return (
+                      <div
+                        key={s.id}
+                        style={{
+                          border: `1px solid ${COLORS.lineSoft}`,
+                          background: "rgba(255,255,255,0.60)",
+                          borderRadius: 16,
+                          padding: 12,
+                          minWidth: 0,
+                        }}
+                      >
+                        {/* 학생 헤더 */}
+                        <div
                           style={{
-                            color: COLORS.blue,
-                            textDecoration: "underline",
-                            fontWeight: 900,
-                            fontSize: 17,
+                            display: "flex",
+                            alignItems: "baseline",
+                            justifyContent: "space-between",
+                            gap: 10,
+                            marginBottom: 10,
                           }}
-                          title="학생 상세로 이동"
                         >
-                          {s.name}
-                        </Link>
-                        <div style={{ fontSize: 12, color: COLORS.sub }}>
-                          {s.school || "-"} · {s.grade || "-"}
+                          <div style={{ display: "flex", flexDirection: "column", gap: 4, minWidth: 0 }}>
+                            <Link
+                              to={`/students/${s.id}`}
+                              style={{
+                                color: COLORS.blue,
+                                textDecoration: "underline",
+                                fontWeight: 900,
+                                fontSize: 17,
+                                whiteSpace: "nowrap",
+                                overflow: "hidden",
+                                textOverflow: "ellipsis",
+                              }}
+                              title="학생 상세로 이동"
+                            >
+                              {s.name}
+                            </Link>
+                            <div style={{ fontSize: 12, color: COLORS.sub, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                              {s.school || "-"} · {s.grade || "-"}
+                            </div>
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => nav(`/students/${s.id}`)}
+                            style={{
+                              border: `1px solid ${COLORS.line}`,
+                              background: "transparent",
+                              borderRadius: 10,
+                              padding: "8px 10px",
+                              cursor: "pointer",
+                              fontWeight: 800,
+                              color: COLORS.text,
+                              whiteSpace: "nowrap",
+                              flex: "0 0 auto",
+                            }}
+                          >
+                            상세 →
+                          </button>
+                        </div>
+
+                        {/* 할일 목록 */}
+                        <div style={{ display: "grid", gap: 8 }}>
+                          {list.map((t) => {
+                            const isBusy = busyKey === t.id;
+                            const val = editMap[t.id] ?? t.text ?? "";
+
+                            return (
+                              <div
+                                key={t.id}
+                                style={{
+                                  display: "grid",
+                                  gridTemplateColumns: "1fr",
+                                  gap: 8,
+                                  padding: 10,
+                                  borderRadius: 12,
+                                  border: `1px solid ${COLORS.lineSoft}`,
+                                  background: "rgba(255,255,255,0.55)",
+                                }}
+                              >
+                                <input
+                                  value={val}
+                                  onChange={(e) => setEdit(t.id, e.target.value)}
+                                  placeholder="할일"
+                                  style={{
+                                    width: "100%",
+                                    height: 40,
+                                    padding: "0 10px",
+                                    borderRadius: 10,
+                                    border: `1px solid ${COLORS.line}`,
+                                    background: "rgba(255,255,255,0.92)",
+                                    fontSize: 14,
+                                    fontWeight: 700,
+                                    color: COLORS.text,
+                                  }}
+                                />
+
+                                <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                                  <button
+                                    type="button"
+                                    disabled={isBusy}
+                                    onClick={() => saveTodo(t)}
+                                    style={{
+                                      height: 40,
+                                      padding: "0 10px",
+                                      borderRadius: 10,
+                                      border: `1px solid ${COLORS.line}`,
+                                      background: COLORS.blueSoft,
+                                      color: COLORS.text,
+                                      fontWeight: 900,
+                                      cursor: isBusy ? "not-allowed" : "pointer",
+                                      opacity: isBusy ? 0.6 : 1,
+                                      flex: 1,
+                                    }}
+                                    title="저장"
+                                  >
+                                    저장
+                                  </button>
+
+                                  <button
+                                    type="button"
+                                    disabled={isBusy}
+                                    onClick={() => deleteTodo(t)}
+                                    style={{
+                                      height: 40,
+                                      padding: "0 10px",
+                                      borderRadius: 10,
+                                      border: `1px solid ${COLORS.line}`,
+                                      background: COLORS.dangerSoft,
+                                      color: COLORS.danger,
+                                      fontWeight: 900,
+                                      cursor: isBusy ? "not-allowed" : "pointer",
+                                      opacity: isBusy ? 0.6 : 1,
+                                      flex: 1,
+                                    }}
+                                    title="삭제"
+                                  >
+                                    삭제
+                                  </button>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+
+                        {/* ✅ (선택) 카드에서 바로 할일 추가는 유지 */}
+                        <div
+                          style={{
+                            marginTop: 10,
+                            display: "grid",
+                            gridTemplateColumns: "1fr auto",
+                            gap: 8,
+                          }}
+                        >
+                          <input
+                            value={addMap[s.id] ?? ""}
+                            onChange={(e) => setAdd(s.id, e.target.value)}
+                            placeholder="할일 추가…"
+                            style={{
+                              width: "100%",
+                              height: 42,
+                              padding: "0 10px",
+                              borderRadius: 12,
+                              border: `1px solid ${COLORS.line}`,
+                              background: "rgba(255,255,255,0.92)",
+                              fontSize: 14,
+                              fontWeight: 700,
+                              color: COLORS.text,
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") addTodo(s.id);
+                            }}
+                          />
+                          <button
+                            type="button"
+                            onClick={() => addTodo(s.id)}
+                            disabled={busyKey === `add:${s.id}`}
+                            style={{
+                              height: 42,
+                              padding: "0 12px",
+                              borderRadius: 12,
+                              border: `1px solid ${COLORS.line}`,
+                              background: "rgba(47,111,237,0.12)",
+                              color: COLORS.text,
+                              fontWeight: 900,
+                              cursor: busyKey === `add:${s.id}` ? "not-allowed" : "pointer",
+                              opacity: busyKey === `add:${s.id}` ? 0.6 : 1,
+                              whiteSpace: "nowrap",
+                            }}
+                          >
+                            추가 +
+                          </button>
                         </div>
                       </div>
-
-                      <button
-                        type="button"
-                        onClick={() => nav(`/students/${s.id}`)}
-                        style={{
-                          border: `1px solid ${COLORS.line}`,
-                          background: "transparent",
-                          borderRadius: 10,
-                          padding: "8px 10px",
-                          cursor: "pointer",
-                          fontWeight: 800,
-                          color: COLORS.text,
-                          whiteSpace: "nowrap",
-                        }}
-                      >
-                        상세보기 →
-                      </button>
-                    </div>
-
-                    {/* 할일 목록 */}
-                    {list.length === 0 ? (
-                      <div style={{ color: COLORS.sub, fontSize: 13, padding: "6px 2px 10px" }}>이 날짜에 등록된 할일이 없어요.</div>
-                    ) : (
-                      <div style={{ display: "grid", gap: 8 }}>
-                        {list.map((t) => {
-                          const isBusy = busyKey === t.id;
-                          const val = editMap[t.id] ?? t.text ?? "";
-
-                          return (
-                            <div
-                              key={t.id}
-                              style={{
-                                display: "grid",
-                                gridTemplateColumns: "1fr auto",
-                                gap: 8,
-                                alignItems: "center",
-                                padding: 10,
-                                borderRadius: 12,
-                                border: `1px solid ${COLORS.lineSoft}`,
-                                background: "rgba(255,255,255,0.55)",
-                              }}
-                            >
-                              <input
-                                value={val}
-                                onChange={(e) => setEdit(t.id, e.target.value)}
-                                placeholder="할일"
-                                style={{
-                                  width: "100%",
-                                  height: 40,
-                                  padding: "0 10px",
-                                  borderRadius: 10,
-                                  border: `1px solid ${COLORS.line}`,
-                                  background: "rgba(255,255,255,0.92)",
-                                  fontSize: 14,
-                                  fontWeight: 700,
-                                  color: COLORS.text,
-                                }}
-                              />
-
-                              <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                                <button
-                                  type="button"
-                                  disabled={isBusy}
-                                  onClick={() => saveTodo(t)}
-                                  style={{
-                                    height: 40,
-                                    padding: "0 10px",
-                                    borderRadius: 10,
-                                    border: `1px solid ${COLORS.line}`,
-                                    background: COLORS.blueSoft,
-                                    color: COLORS.text,
-                                    fontWeight: 900,
-                                    cursor: isBusy ? "not-allowed" : "pointer",
-                                    opacity: isBusy ? 0.6 : 1,
-                                  }}
-                                  title="저장"
-                                >
-                                  저장
-                                </button>
-
-                                <button
-                                  type="button"
-                                  disabled={isBusy}
-                                  onClick={() => deleteTodo(t)}
-                                  style={{
-                                    height: 40,
-                                    padding: "0 10px",
-                                    borderRadius: 10,
-                                    border: `1px solid ${COLORS.line}`,
-                                    background: COLORS.dangerSoft,
-                                    color: COLORS.danger,
-                                    fontWeight: 900,
-                                    cursor: isBusy ? "not-allowed" : "pointer",
-                                    opacity: isBusy ? 0.6 : 1,
-                                  }}
-                                  title="삭제"
-                                >
-                                  삭제
-                                </button>
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
-
-                    {/* 할일 추가 */}
-                    <div
-                      style={{
-                        marginTop: 10,
-                        display: "grid",
-                        gridTemplateColumns: "1fr auto",
-                        gap: 8,
-                      }}
-                    >
-                      <input
-                        value={addMap[s.id] ?? ""}
-                        onChange={(e) => setAdd(s.id, e.target.value)}
-                        placeholder="할일 추가…"
-                        style={{
-                          width: "100%",
-                          height: 42,
-                          padding: "0 10px",
-                          borderRadius: 12,
-                          border: `1px solid ${COLORS.line}`,
-                          background: "rgba(255,255,255,0.92)",
-                          fontSize: 14,
-                          fontWeight: 700,
-                          color: COLORS.text,
-                        }}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") addTodo(s.id);
-                        }}
-                      />
-                      <button
-                        type="button"
-                        onClick={() => addTodo(s.id)}
-                        disabled={busyKey === `add:${s.id}`}
-                        style={{
-                          height: 42,
-                          padding: "0 12px",
-                          borderRadius: 12,
-                          border: `1px solid ${COLORS.line}`,
-                          background: "rgba(47,111,237,0.12)",
-                          color: COLORS.text,
-                          fontWeight: 900,
-                          cursor: busyKey === `add:${s.id}` ? "not-allowed" : "pointer",
-                          opacity: busyKey === `add:${s.id}` ? 0.6 : 1,
-                          whiteSpace: "nowrap",
-                        }}
-                      >
-                        추가 +
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </>
           )}
         </div>
 
