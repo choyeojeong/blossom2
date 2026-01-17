@@ -24,6 +24,11 @@ import LecturesPage from "./pages/LecturesPage";
 import OneToOneScheduleSelectPage from "./pages/OneToOneScheduleSelectPage";
 import OneToOneSchedulePage from "./pages/OneToOneSchedulePage";
 
+// ✅ ✅ 새로 추가: 선생님 허브(시간표보기/날짜별할일보기)
+import TeacherOneToOneHubPage from "./pages/TeacherOneToOneHubPage";
+// ✅ ✅ 새로 추가: 날짜별 할일 보기(뼈대)
+import OneToOneTodosPage from "./pages/OneToOneTodosPage";
+
 // ✅ 독해 시간표
 import ReadingSchedulePage from "./pages/ReadingSchedulePage";
 
@@ -122,11 +127,25 @@ export default function App() {
           {/* 강의관리 */}
           <Route path="/lectures" element={<LecturesPage />} />
 
-          {/* 일대일 시간표 */}
+          {/* ✅ 일대일 시간표 */}
           <Route path="/one-to-one" element={<OneToOneScheduleSelectPage />} />
+
+          {/* ✅ 선생님 선택 후: 허브 페이지 (시간표보기 / 날짜별할일보기) */}
           <Route
             path="/one-to-one/:teacherName"
+            element={<TeacherOneToOneHubPage />}
+          />
+
+          {/* ✅ 시간표보기: 기존 일대일시간표 페이지 */}
+          <Route
+            path="/one-to-one/:teacherName/schedule"
             element={<OneToOneSchedulePage />}
+          />
+
+          {/* ✅ 날짜별할일보기: 새 페이지(뼈대) */}
+          <Route
+            path="/one-to-one/:teacherName/todos"
+            element={<OneToOneTodosPage />}
           />
 
           {/* 독해 시간표 */}

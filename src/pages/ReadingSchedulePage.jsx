@@ -127,6 +127,9 @@ export default function ReadingSchedulePage() {
   const [err, setErr] = useState("");
   const [rows, setRows] = useState([]);
 
+  // ✅✅✅ 보강 수업의 "원결석일/결석사유" 표시용 맵
+  const [originalMap, setOriginalMap] = useState({}); // { [original_event_id]: { id, event_date, absent_reason } }
+
   // 메모 drafts / saving
   const [memoDraftById, setMemoDraftById] = useState({});
   const [memoSavingId, setMemoSavingId] = useState(null);
@@ -204,12 +207,7 @@ export default function ReadingSchedulePage() {
         `
         )
         .eq("event_date", date)
-        .or(
-          [
-            "kind.eq.reading",
-            "and(kind.eq.extra,event_kind.eq.makeup,schedule_kind.eq.reading)",
-          ].join(",")
-        );
+        .or(["kind.eq.reading", "and(kind.eq.extra,event_kind.eq.makeup,schedule_kind.eq.reading)"].join(","));
 
       if (error) throw error;
 
@@ -246,6 +244,37 @@ export default function ReadingSchedulePage() {
         }
         return next;
       });
+
+      // ✅✅✅ 보강(추가수업)의 원결석일/사유를 표시하기 위해 원이벤트들을 한 번 더 로드
+      try {
+        const originIds = Array.from(
+          new Set(
+            normalized
+              .filter((e) => e.kind === "extra" && (e.event_kind || "") === "makeup" && e.original_event_id)
+              .map((e) => String(e.original_event_id))
+          )
+        ).filter(Boolean);
+
+        if (originIds.length === 0) {
+          setOriginalMap({});
+        } else {
+          const { data: origins, error: oErr } = await supabase
+            .from("student_events")
+            .select("id, event_date, absent_reason")
+            .in("id", originIds);
+
+          if (oErr) throw oErr;
+
+          const m = {};
+          for (const r of origins || []) {
+            m[String(r.id)] = { id: r.id, event_date: r.event_date, absent_reason: r.absent_reason };
+          }
+          setOriginalMap(m);
+        }
+      } catch {
+        // 실패해도 시간표는 보이게
+        setOriginalMap((prev) => prev || {});
+      }
     } catch (e) {
       setErr(e?.message || String(e));
     } finally {
@@ -262,18 +291,30 @@ export default function ReadingSchedulePage() {
     try {
       setErr("");
 
+      const isMakeup = isMakeupRow(r);
+
       // ✅ FIX: 날짜+시간 기준으로 정확히 late 계산
       const late = calcLateFromNow(r.event_date, r.start_time);
 
-      const { error } = await supabase
-        .from("student_events")
-        .update({
-          attendance_status: "present",
-          attended_at: new Date().toISOString(),
-          late_minutes: late,
-          absent_reason: null,
-        })
-        .eq("id", r.id);
+      // ✅✅✅ FIX: 보강은 원결석 정보( original_event_id / makeup_class_time 등) 절대 건드리지 않음
+      const payload = isMakeup
+        ? {
+            attendance_status: "present",
+            attended_at: new Date().toISOString(),
+            late_minutes: late,
+            absent_reason: null,
+          }
+        : {
+            attendance_status: "present",
+            attended_at: new Date().toISOString(),
+            late_minutes: late,
+            absent_reason: null,
+            makeup_date: null,
+            makeup_time: null,
+            makeup_class_time: null,
+          };
+
+      const { error } = await supabase.from("student_events").update(payload).eq("id", r.id);
 
       if (error) throw error;
       await load();
@@ -344,19 +385,10 @@ export default function ReadingSchedulePage() {
           makeup_class_time: mct,
         };
 
-        const { data: insData, error: insErr } = await supabase
-          .from("student_events")
-          .insert(insertPayload)
-          .select("id")
-          .single();
-
+        const { data: insData, error: insErr } = await supabase.from("student_events").insert(insertPayload).select("id").single();
         if (insErr) throw insErr;
 
-        const { error: linkErr } = await supabase
-          .from("student_events")
-          .update({ makeup_event_id: insData?.id || null })
-          .eq("id", r.id);
-
+        const { error: linkErr } = await supabase.from("student_events").update({ makeup_event_id: insData?.id || null }).eq("id", r.id);
         if (linkErr) throw linkErr;
       }
 
@@ -436,32 +468,43 @@ export default function ReadingSchedulePage() {
     el.style.height = `${Math.min(el.scrollHeight, 120)}px`;
   }
 
+  // ✅✅✅ 보강 수업에서 원결석 정보 한 줄 만들어주기
+  function getMakeupOriginLine(r) {
+    if (!isMakeupRow(r)) return "";
+    if (!r.original_event_id) return ""; // 수동 보강이면 없음
+
+    const origin = originalMap[String(r.original_event_id)] || null;
+    if (!origin) return "원결석: (정보 로딩 실패)";
+
+    const d = origin.event_date || "-";
+    const reason = origin.absent_reason ? ` (사유: ${origin.absent_reason})` : "";
+    return `원결석: ${d}${reason}`;
+  }
+
   function renderAttendanceCell(r) {
     const status = r.attendance_status || null;
 
     if (status === "present") {
       const win = presentWindow(r.attended_at);
 
-      // ✅ FIX: DB late_minutes가 0으로 잘못 저장된 케이스도 “attended_at”으로 재계산해서 표시
       const stored = r.late_minutes;
       const storedNum = stored === null || stored === undefined ? null : Number(stored);
       const computed = calcLateFromAttendedAt(r.event_date, r.start_time, r.attended_at);
 
-      // 표시용 late 결정:
-      // - 저장값이 유효(>0)이면 그걸 사용
-      // - 저장값이 0/없음인데 computed가 1 이상이면 computed 사용
-      // - 그 외는 0 처리
       let lateForShow = 0;
       if (Number.isFinite(storedNum) && storedNum > 0) lateForShow = storedNum;
       else if (Number.isFinite(computed) && computed > 0) lateForShow = computed;
       else lateForShow = 0;
 
       const lateText = lateForShow <= 0 ? "정시 출석" : `지각 ${lateForShow}분`;
+      const originLine = getMakeupOriginLine(r);
 
       return (
         <div style={styles.attnBox}>
           <div style={styles.attnLine1}>{win || "출석"}</div>
           <div style={styles.attnLine2}>{lateText}</div>
+          {/* ✅✅✅ 보강이면 원결석일/사유 표시 */}
+          {originLine ? <div style={styles.attnLine3}>{originLine}</div> : null}
         </div>
       );
     }
@@ -469,25 +512,33 @@ export default function ReadingSchedulePage() {
     if (status === "absent") {
       const line1 = r.absent_reason ? `결석 (${r.absent_reason})` : "결석";
       const line2 =
-        r.kind === "reading" && r.makeup_date && r.makeup_class_time
-          ? `보강 ${dayjs(r.makeup_date).format("MM.DD")} ${r.makeup_class_time}`
-          : "";
+        r.kind === "reading" && r.makeup_date && r.makeup_class_time ? `보강 ${dayjs(r.makeup_date).format("MM.DD")} ${r.makeup_class_time}` : "";
+      const originLine = getMakeupOriginLine(r);
+
       return (
         <div style={styles.attnBox}>
           <div style={styles.attnLine1}>{line1}</div>
           <div style={styles.attnLine2}>{line2}</div>
+          {/* ✅✅✅ 보강이면 원결석일/사유 표시 */}
+          {originLine ? <div style={styles.attnLine3}>{originLine}</div> : null}
         </div>
       );
     }
 
+    // 미처리(출석/결석 버튼) 상태에서도 보강이면 원결석 표시
+    const originLine = getMakeupOriginLine(r);
+
     return (
-      <div style={{ display: "flex", justifyContent: "center", gap: 8 }}>
-        <button type="button" onClick={() => markPresent(r)} style={styles.btnPresent}>
-          출석
-        </button>
-        <button type="button" onClick={() => openAbsent(r)} style={styles.btnAbsent}>
-          결석
-        </button>
+      <div style={{ width: "100%", display: "grid", gap: 6, justifyItems: "center" }}>
+        <div style={{ display: "flex", justifyContent: "center", gap: 8 }}>
+          <button type="button" onClick={() => markPresent(r)} style={styles.btnPresent}>
+            출석
+          </button>
+          <button type="button" onClick={() => openAbsent(r)} style={styles.btnAbsent}>
+            결석
+          </button>
+        </div>
+        {originLine ? <div style={styles.attnLine3}>{originLine}</div> : null}
       </div>
     );
   }
@@ -741,12 +792,7 @@ export default function ReadingSchedulePage() {
 
             <div>
               <div style={styles.label}>보강 수업시간 HH:MM</div>
-              <input
-                value={addTime}
-                onChange={(e) => setAddTime(clampTimeHHMM(e.target.value))}
-                placeholder="예: 16:30"
-                style={styles.input}
-              />
+              <input value={addTime} onChange={(e) => setAddTime(clampTimeHHMM(e.target.value))} placeholder="예: 16:30" style={styles.input} />
             </div>
 
             <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "flex-end" }}>
@@ -1072,6 +1118,20 @@ const styles = {
     textOverflow: "ellipsis",
     lineHeight: "16px",
     minHeight: 16,
+  },
+  // ✅✅✅ 추가 라인(원결석 정보)
+  attnLine3: {
+    width: "100%",
+    textAlign: "center",
+    fontWeight: 900,
+    fontSize: 12,
+    color: COLORS.sub,
+    whiteSpace: "nowrap",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    lineHeight: "16px",
+    minHeight: 16,
+    marginTop: 2,
   },
 
   memo: {

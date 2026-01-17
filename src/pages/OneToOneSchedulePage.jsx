@@ -166,6 +166,9 @@ export default function OneToOneSchedulePage() {
     makeupClassTime: "",
   });
 
+  // ✅ 보강의 "원결석일/결석사유" 표시용 원이벤트 맵
+  const [originalMap, setOriginalMap] = useState({}); // { [original_event_id]: { id, event_date, absent_reason } }
+
   const fixedSlots = useMemo(() => {
     // ✅ 토요일이면 학기/방학 무관하게 토요일 슬롯 사용
     const dow = parseISODate(selectedDate).getDay(); // 0=일 ... 6=토
@@ -251,6 +254,41 @@ export default function OneToOneSchedulePage() {
 
       if (error) throw error;
       setEvents(data || []);
+
+      // ✅✅✅ 보강(추가수업)의 원결석일/사유를 표시하기 위해, 원이벤트들을 한 번 더 로드
+      try {
+        const originIds = Array.from(
+          new Set(
+            (data || [])
+              .filter((e) => e.kind === "extra" && e.event_kind === "makeup" && e.original_event_id)
+              .map((e) => String(e.original_event_id))
+          )
+        ).filter(Boolean);
+
+        if (originIds.length === 0) {
+          setOriginalMap({});
+        } else {
+          const { data: origins, error: oErr } = await supabase
+            .from("student_events")
+            .select("id, event_date, absent_reason")
+            .in("id", originIds);
+
+          if (oErr) throw oErr;
+
+          const m = {};
+          for (const r of origins || []) {
+            m[String(r.id)] = {
+              id: r.id,
+              event_date: r.event_date,
+              absent_reason: r.absent_reason,
+            };
+          }
+          setOriginalMap(m);
+        }
+      } catch {
+        // 원정보 로딩 실패해도 시간표 자체는 표시되도록 (침묵 처리)
+        setOriginalMap((prev) => prev || {});
+      }
 
       // 빈 슬롯 메모 로드
       const { data: sm, error: smErr } = await supabase
@@ -944,6 +982,18 @@ export default function OneToOneSchedulePage() {
                     const linkedMakeupClassTime = e.makeup_event_id ? makeupClassTimeById.get(e.makeup_event_id) || "" : "";
                     const summary = buildSummary(e, linkedMakeupClassTime);
 
+                    // ✅ 보강일 때 원결석 정보
+                    const origin =
+                      e.kind === "extra" && e.event_kind === "makeup" && e.original_event_id
+                        ? originalMap[String(e.original_event_id)] || null
+                        : null;
+
+                    const originLine = origin
+                      ? `원결석: ${origin.event_date || "-"}${origin.absent_reason ? ` (사유: ${origin.absent_reason})` : ""}`
+                      : e.kind === "extra" && e.event_kind === "makeup" && e.original_event_id
+                        ? `원결석: (정보 로딩 실패)`
+                        : null;
+
                     const memoVal = memoDraftByEventId[e.id] ?? (e.memo || "");
                     const memoSaving = memoSavingKey === `e:${e.id}`;
 
@@ -982,6 +1032,13 @@ export default function OneToOneSchedulePage() {
                             <div style={{ display: "flex", flexDirection: "column", gap: 2, alignItems: "center" }}>
                               <div style={{ fontWeight: 1000 }}>{summary?.title}</div>
                               <div style={{ color: COLORS.sub, fontSize: 12, lineHeight: 1.25, textAlign: "center" }}>{summary?.detail}</div>
+
+                              {/* ✅✅✅ 보강이면 원결석일/사유 표시 */}
+                              {originLine ? (
+                                <div style={{ marginTop: 3, color: COLORS.sub, fontSize: 12, lineHeight: 1.25, textAlign: "center", fontWeight: 900 }}>
+                                  {originLine}
+                                </div>
+                              ) : null}
                             </div>
                           ) : null}
 
@@ -1004,6 +1061,11 @@ export default function OneToOneSchedulePage() {
                               </button>
 
                               <div style={{ color: COLORS.sub, fontSize: 12, fontWeight: 800 }}>출석기준: {getAttendanceBaseHHMM(e) || "-"}</div>
+
+                              {/* ✅✅✅ 보강이면 원결석일/사유 표시 (미처리 상태에서도) */}
+                              {originLine ? (
+                                <div style={{ color: COLORS.sub, fontSize: 12, fontWeight: 900 }}>· {originLine}</div>
+                              ) : null}
                             </div>
                           ) : null}
 
@@ -1147,6 +1209,7 @@ export default function OneToOneSchedulePage() {
             <br />· 원수업(oto_class) 초기화 → 연결된 보강도 함께 삭제됨
             <br />· 삭제 버튼 → 해당 날짜의 해당 이벤트 1개만 삭제됨
             <br />· 수동 보강/자동 보강 모두 <b>schedule_kind='oto'</b>로 강제 저장됨 (독해 시간표와 섞임 방지)
+            <br />· 보강(노란색)은 <b>원결석일/결석사유</b>를 함께 표시합니다
           </div>
 
           {/* ✅ 수동 보강 추가 폼 */}

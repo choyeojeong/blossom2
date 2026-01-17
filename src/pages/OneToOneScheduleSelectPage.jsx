@@ -63,7 +63,7 @@ export default function OneToOneScheduleSelectPage() {
         minHeight: "100vh",
         background: COLORS.bg,
         color: COLORS.text,
-        padding: "28px 18px 40px",
+        padding: `calc(env(safe-area-inset-top, 0px) + 28px) 18px calc(env(safe-area-inset-bottom, 0px) + 40px)`,
       }}
     >
       <div style={{ maxWidth: 980, margin: "0 auto" }}>
@@ -101,7 +101,9 @@ export default function OneToOneScheduleSelectPage() {
           등록된 학생이 있는 선생님만 표시돼요. (학생이 0명이 되면 자동으로 사라짐)
         </p>
 
-        {err ? <div style={{ color: COLORS.danger, marginBottom: 12 }}>{err}</div> : null}
+        {err ? (
+          <div style={{ color: COLORS.danger, marginBottom: 12 }}>{err}</div>
+        ) : null}
 
         <div style={{ borderTop: `1px solid ${COLORS.line}` }} />
 
@@ -117,7 +119,10 @@ export default function OneToOneScheduleSelectPage() {
               <button
                 key={t.teacher_name}
                 type="button"
-                onClick={() => nav(`/one-to-one/${encodeURIComponent(t.teacher_name)}`)}
+                // ✅ 선생님 클릭 시: 기존 시간표로 바로 가지 말고 "허브 페이지(버튼 2개)"로 이동
+                onClick={() =>
+                  nav(`/one-to-one/${encodeURIComponent(t.teacher_name)}`)
+                }
                 style={{
                   width: "100%",
                   textAlign: "left",
@@ -133,8 +138,12 @@ export default function OneToOneScheduleSelectPage() {
                 }}
               >
                 <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                  <div style={{ fontSize: 18, fontWeight: 900 }}>{t.teacher_name}</div>
-                  <div style={{ color: COLORS.sub, fontSize: 13 }}>학생 {t.count}명</div>
+                  <div style={{ fontSize: 18, fontWeight: 900 }}>
+                    {t.teacher_name}
+                  </div>
+                  <div style={{ color: COLORS.sub, fontSize: 13 }}>
+                    학생 {t.count}명
+                  </div>
                 </div>
 
                 <div

@@ -234,6 +234,55 @@ export default function StudentDetailPage() {
     [calendarDates, endWeek]
   );
 
+  // ✅ 날짜 범위 체크 (Realtime 반영용)
+  function inRange(dateIso) {
+    if (!dateIso) return false;
+    return !dayjs(dateIso).isBefore(dayjs(rangeMin)) && !dayjs(dateIso).isAfter(dayjs(rangeMax));
+  }
+
+  // ✅ todosByDate에 row를 "정렬 포함"하여 upsert
+  function upsertTodoRow(row) {
+    if (!row?.id || !row?.todo_date) return;
+
+    const dateIso = row.todo_date;
+    if (!inRange(dateIso)) return;
+
+    const item = {
+      id: row.id,
+      text: row.text || "",
+      order_index: row.order_index ?? 0,
+    };
+
+    setTodosByDate((prev) => {
+      const cur = [...(prev[dateIso] || [])];
+      const idx = cur.findIndex((x) => x.id === item.id);
+      if (idx >= 0) cur[idx] = { ...cur[idx], ...item };
+      else cur.push(item);
+      cur.sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0));
+      return { ...prev, [dateIso]: cur };
+    });
+  }
+
+  // ✅ 특정 todoId를 모든 날짜 버킷에서 제거 (날짜 이동/삭제 대응)
+  function removeTodoEverywhere(todoId) {
+    if (!todoId) return;
+    setTodosByDate((prev) => {
+      let changed = false;
+      const next = {};
+      for (const d of Object.keys(prev || {})) {
+        const arr = prev[d] || [];
+        const filtered = arr.filter((x) => x.id !== todoId);
+        if (filtered.length !== arr.length) changed = true;
+        next[d] = filtered;
+      }
+      return changed ? next : prev;
+    });
+    if (editingId === todoId) {
+      setEditingId(null);
+      setEditingText("");
+    }
+  }
+
   const greenWeekdaySet = useMemo(() => {
     const s = new Set();
 
@@ -516,6 +565,74 @@ export default function StudentDetailPage() {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [studentId]);
+
+  // ✅✅✅ Realtime: student_todos 변경을 이 페이지 todosByDate에 즉시 반영
+  useEffect(() => {
+    if (!studentId) return;
+
+    const channel = supabase
+      .channel(`rt-student-todos-${studentId}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "student_todos", filter: `student_id=eq.${studentId}` },
+        (payload) => {
+          // payload: { eventType, new, old, ... }
+          const type = payload.eventType;
+
+          if (type === "INSERT") {
+            const row = payload.new;
+            // 현재 캘린더 범위 안에 들어오는 날짜만 반영
+            if (!row?.todo_date) return;
+            if (!inRange(row.todo_date)) return;
+            upsertTodoRow(row);
+            return;
+          }
+
+          if (type === "UPDATE") {
+            const nextRow = payload.new;
+            const oldRow = payload.old;
+
+            // 날짜가 바뀌었다면: 기존 위치에서 제거 후 새 위치에 upsert
+            const oldDate = oldRow?.todo_date;
+            const newDate = nextRow?.todo_date;
+
+            if (oldRow?.id) {
+              // oldDate가 범위 안이면 oldDate에서 제거
+              if (oldDate && inRange(oldDate)) {
+                setTodosByDate((prev) => {
+                  const arr = prev[oldDate] || [];
+                  const filtered = arr.filter((x) => x.id !== oldRow.id);
+                  if (filtered.length === arr.length) return prev;
+                  return { ...prev, [oldDate]: filtered };
+                });
+              } else {
+                // 혹시 어디에 있든 제거(안전)
+                removeTodoEverywhere(oldRow.id);
+              }
+            }
+
+            // newDate가 범위 안이면 새로 upsert
+            if (newDate && inRange(newDate)) {
+              upsertTodoRow(nextRow);
+            }
+            return;
+          }
+
+          if (type === "DELETE") {
+            const oldRow = payload.old;
+            if (!oldRow?.id) return;
+            removeTodoEverywhere(oldRow.id);
+            return;
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [studentId, rangeMin, rangeMax]);
 
   useEffect(() => {
     if (!studentId) return;
@@ -987,7 +1104,7 @@ export default function StudentDetailPage() {
 
   const todoItem = {
     display: "flex",
-    alignItems: "flex-start", // ✅ 여러 줄일 때 자연스럽게
+    alignItems: "flex-start",
     gap: 8,
     padding: "8px 9px",
     borderRadius: 12,
@@ -997,7 +1114,6 @@ export default function StudentDetailPage() {
     userSelect: "none",
   };
 
-  // ✅ FIX: 2줄 제한 제거 → 길어져도 계속 자동 줄바꿈
   const todoTextWrap = {
     fontWeight: 700,
     fontSize: 12.5,
