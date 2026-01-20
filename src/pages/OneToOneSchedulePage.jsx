@@ -13,6 +13,10 @@ const COLORS = {
   blueSoft: "#dcecff",
   redSoft: "#ffe3e3",
   yellowSoft: "#fff2c9",
+
+  // ✅ 메모가 있을 때 강조(연노랑)
+  memoBg: "rgba(255, 196, 0, 0.16)",
+  memoBd: "rgba(255, 170, 0, 0.65)",
 };
 
 const CLASS_MINUTES = 40;
@@ -837,6 +841,21 @@ export default function OneToOneSchedulePage() {
     outline: "none",
   };
 
+  // ✅ 메모 있으면 강조 스타일
+  function hasText(v) {
+    return String(v || "").trim().length > 0;
+  }
+  function memoStyle(base, val, saving) {
+    const on = hasText(val);
+    return {
+      ...base,
+      background: on ? COLORS.memoBg : base.background,
+      border: on ? `1px solid ${COLORS.memoBd}` : base.border,
+      boxShadow: on ? "0 0 0 2px rgba(255,170,0,0.12) inset" : "none",
+      opacity: saving ? 0.75 : 1,
+    };
+  }
+
   // ✅ 학생 이름 링크 스타일(파란색 + 밑줄)
   const nameLinkStyle = {
     color: "#1f6feb",
@@ -963,7 +982,7 @@ export default function OneToOneSchedulePage() {
                             onBlur={() => saveSlotMemo(slot.slotStart)}
                             placeholder="(빈 슬롯 메모)"
                             rows={1}
-                            style={{ ...memoMiniStyle, opacity: saving ? 0.75 : 1 }}
+                            style={memoStyle(memoMiniStyle, slotMemoVal, saving)}
                             disabled={saving}
                           />
                         </td>
@@ -1063,9 +1082,7 @@ export default function OneToOneSchedulePage() {
                               <div style={{ color: COLORS.sub, fontSize: 12, fontWeight: 800 }}>출석기준: {getAttendanceBaseHHMM(e) || "-"}</div>
 
                               {/* ✅✅✅ 보강이면 원결석일/사유 표시 (미처리 상태에서도) */}
-                              {originLine ? (
-                                <div style={{ color: COLORS.sub, fontSize: 12, fontWeight: 900 }}>· {originLine}</div>
-                              ) : null}
+                              {originLine ? <div style={{ color: COLORS.sub, fontSize: 12, fontWeight: 900 }}>· {originLine}</div> : null}
                             </div>
                           ) : null}
 
@@ -1189,7 +1206,7 @@ export default function OneToOneSchedulePage() {
                             onBlur={() => saveEventMemo(e.id)}
                             placeholder="메모"
                             rows={1}
-                            style={{ ...memoMiniStyle, opacity: memoSaving ? 0.75 : 1 }}
+                            style={memoStyle(memoMiniStyle, memoVal, memoSaving)}
                             disabled={memoSaving}
                           />
                         </td>
