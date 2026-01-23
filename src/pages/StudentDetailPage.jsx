@@ -4,6 +4,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import dayjs from "dayjs";
 import "dayjs/locale/ko";
 import { supabase } from "../utils/supabaseClient";
+import StudentsPage from "./StudentsPage"; // ✅ 학생관리 오버레이로 띄우기
 
 dayjs.locale("ko");
 
@@ -188,6 +189,9 @@ export default function StudentDetailPage() {
   const [topMemo, setTopMemo] = useState("");
   const memoSaveTimer = useRef(null);
   const [memoSaving, setMemoSaving] = useState(false);
+
+  // ✅ 학생관리 오버레이
+  const [showStudentsManage, setShowStudentsManage] = useState(false);
 
   const todayIso = iso(new Date());
   const defaultStart = clampMonday(todayIso);
@@ -395,15 +399,13 @@ export default function StudentDetailPage() {
     }
   }
 
-  async function load() {
+  async function loadStudentBaseAndExtrasOnly() {
     if (!studentId) return;
-    setLoading(true);
-    setErr("");
-    try {
-      const { data: stu, error: stuErr } = await supabase
-        .from("students")
-        .select(
-          `
+
+    const { data: stu, error: stuErr } = await supabase
+      .from("students")
+      .select(
+        `
           id,
           name,
           school,
@@ -414,27 +416,33 @@ export default function StudentDetailPage() {
           winter_oto_weekday,
           winter_read_weekday
         `
-        )
-        .eq("id", studentId)
-        .single();
-      if (stuErr) throw stuErr;
+      )
+      .eq("id", studentId)
+      .single();
+    if (stuErr) throw stuErr;
 
-      // ✅ FIX: student_extra_rules는 (season, weekday, class_time) 구조여서 kind 필터링하면 빈 배열이 될 수 있음
-      //         -> weekday만 가져와서 전부 "추가등원 요일"로 합산
-      const { data: extra, error: extraErr } = await supabase.from("student_extra_rules").select("weekday").eq("student_id", studentId);
-      if (extraErr) throw extraErr;
+    const { data: extra, error: extraErr } = await supabase.from("student_extra_rules").select("weekday").eq("student_id", studentId);
+    if (extraErr) throw extraErr;
 
-      // ✅ weekday 0-based(0~5) 저장 방어 + 1~6 정상값 허용 + 중복 제거
-      const set = new Set();
-      for (const r of extra || []) {
-        let n = Number(r?.weekday);
-        if (!Number.isFinite(n)) continue;
-        if (n >= 1 && n <= 6) set.add(n);
-        else if (n >= 0 && n <= 5) set.add(n + 1);
-      }
-      const extraWeekdays = Array.from(set);
+    // ✅ weekday 0-based(0~5) 저장 방어 + 1~6 정상값 허용 + 중복 제거
+    const set = new Set();
+    for (const r of extra || []) {
+      let n = Number(r?.weekday);
+      if (!Number.isFinite(n)) continue;
+      if (n >= 1 && n <= 6) set.add(n);
+      else if (n >= 0 && n <= 5) set.add(n + 1);
+    }
+    const extraWeekdays = Array.from(set);
 
-      setStudent({ ...stu, __extraWeekdays: extraWeekdays });
+    setStudent({ ...stu, __extraWeekdays: extraWeekdays });
+  }
+
+  async function load() {
+    if (!studentId) return;
+    setLoading(true);
+    setErr("");
+    try {
+      await loadStudentBaseAndExtrasOnly();
 
       const { data: memoRow, error: memoErr } = await supabase.from("student_memos").select("memo").eq("student_id", studentId).maybeSingle();
       if (memoErr) throw memoErr;
@@ -576,12 +584,10 @@ export default function StudentDetailPage() {
         "postgres_changes",
         { event: "*", schema: "public", table: "student_todos", filter: `student_id=eq.${studentId}` },
         (payload) => {
-          // payload: { eventType, new, old, ... }
           const type = payload.eventType;
 
           if (type === "INSERT") {
             const row = payload.new;
-            // 현재 캘린더 범위 안에 들어오는 날짜만 반영
             if (!row?.todo_date) return;
             if (!inRange(row.todo_date)) return;
             upsertTodoRow(row);
@@ -592,12 +598,10 @@ export default function StudentDetailPage() {
             const nextRow = payload.new;
             const oldRow = payload.old;
 
-            // 날짜가 바뀌었다면: 기존 위치에서 제거 후 새 위치에 upsert
             const oldDate = oldRow?.todo_date;
             const newDate = nextRow?.todo_date;
 
             if (oldRow?.id) {
-              // oldDate가 범위 안이면 oldDate에서 제거
               if (oldDate && inRange(oldDate)) {
                 setTodosByDate((prev) => {
                   const arr = prev[oldDate] || [];
@@ -606,12 +610,10 @@ export default function StudentDetailPage() {
                   return { ...prev, [oldDate]: filtered };
                 });
               } else {
-                // 혹시 어디에 있든 제거(안전)
                 removeTodoEverywhere(oldRow.id);
               }
             }
 
-            // newDate가 범위 안이면 새로 upsert
             if (newDate && inRange(newDate)) {
               upsertTodoRow(nextRow);
             }
@@ -622,7 +624,6 @@ export default function StudentDetailPage() {
             const oldRow = payload.old;
             if (!oldRow?.id) return;
             removeTodoEverywhere(oldRow.id);
-            return;
           }
         }
       )
@@ -630,6 +631,97 @@ export default function StudentDetailPage() {
 
     return () => {
       supabase.removeChannel(channel);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [studentId, rangeMin, rangeMax]);
+
+  // ✅✅✅ Realtime: 학생관리에서 "학생/추가등원/이벤트" 바뀌면 상세페이지에 즉시 반영
+  // - students: name/school/grade/weekday 규칙 변경 즉시 반영
+  // - student_extra_rules: 추가등원 요일 변경 즉시 반영(녹색 하이라이트)
+  // - student_events: 트리거로 재생성/정리된 이벤트도 범위 안이면 즉시 반영(칩/색상)
+  useEffect(() => {
+    if (!studentId) return;
+
+    const ch = supabase
+      .channel(`rt-student-detail-${studentId}`)
+      // students 변경
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "students", filter: `id=eq.${studentId}` },
+        async (payload) => {
+          const t = payload.eventType;
+          if (t === "DELETE") return;
+
+          const row = payload.new;
+          if (!row?.id) return;
+
+          setStudent((prev) => {
+            const keepExtras = prev?.__extraWeekdays || [];
+            return {
+              id: row.id,
+              name: row.name,
+              school: row.school,
+              grade: row.grade,
+              teacher_name: row.teacher_name,
+              term_oto_weekday: row.term_oto_weekday,
+              term_read_weekday: row.term_read_weekday,
+              winter_oto_weekday: row.winter_oto_weekday,
+              winter_read_weekday: row.winter_read_weekday,
+              __extraWeekdays: keepExtras,
+            };
+          });
+        }
+      )
+      // extra_rules 변경(추가등원 요일)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "student_extra_rules", filter: `student_id=eq.${studentId}` },
+        async (payload) => {
+          // 범위랑 상관없이: 요일 하이라이트는 항상 즉시 반영하는게 체감 좋음
+          try {
+            const { data: extra, error: extraErr } = await supabase.from("student_extra_rules").select("weekday").eq("student_id", studentId);
+            if (extraErr) throw extraErr;
+
+            const set = new Set();
+            for (const r of extra || []) {
+              let n = Number(r?.weekday);
+              if (!Number.isFinite(n)) continue;
+              if (n >= 1 && n <= 6) set.add(n);
+              else if (n >= 0 && n <= 5) set.add(n + 1);
+            }
+            const extraWeekdays = Array.from(set);
+
+            setStudent((prev) => (prev ? { ...prev, __extraWeekdays: extraWeekdays } : prev));
+          } catch (e) {
+            // 여기서 err 토스트성으로 띄우면 너무 자주 보여서 최소화
+            console.error(e);
+          }
+        }
+      )
+      // events 변경(트리거로 이벤트가 바뀌는 케이스 포함)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "student_events", filter: `student_id=eq.${studentId}` },
+        async (payload) => {
+          const row = payload.new || payload.old;
+          const d = row?.event_date;
+          if (!d) return;
+
+          // 현재 화면 범위 안 날짜만 즉시 갱신
+          if (!inRange(d)) return;
+
+          // 이벤트는 집계 로직이 있어서 부분 patch보다 재로드가 안전
+          try {
+            await loadEventsInRange(rangeMin, rangeMax);
+          } catch (e) {
+            console.error(e);
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(ch);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [studentId, rangeMin, rangeMax]);
@@ -1189,6 +1281,16 @@ export default function StudentDetailPage() {
     return c;
   }, [selectedLectureGroups]);
 
+  // ✅ 오버레이 닫을 때: 상세 학생 정보 다시 로드(학생관리에서 수정했을 수도 있으니까)
+  async function closeStudentsManage() {
+    setShowStudentsManage(false);
+    try {
+      await load();
+    } catch (e) {
+      // load() 내부에서 err 처리
+    }
+  }
+
   return (
     <div style={page}>
       <div style={wrap}>
@@ -1202,7 +1304,12 @@ export default function StudentDetailPage() {
             </div>
           </div>
 
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            {/* ✅ 학생관리 버튼 */}
+            <button type="button" style={btnPrimary} onClick={() => setShowStudentsManage(true)}>
+              학생관리
+            </button>
+
             <button type="button" style={btnGhost} onClick={() => nav(-1)}>
               뒤로
             </button>
@@ -1539,6 +1646,68 @@ export default function StudentDetailPage() {
           {copied ? <div style={{ fontWeight: 1000, color: COLORS.blue }}>복사완료</div> : null}
         </div>
       </div>
+
+      {/* ✅ 학생관리 오버레이 */}
+      {showStudentsManage ? (
+        <div
+          role="dialog"
+          aria-modal="true"
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 9999,
+            background: "rgba(10, 18, 32, 0.38)",
+            display: "flex",
+            alignItems: "stretch",
+            justifyContent: "center",
+            padding: "calc(env(safe-area-inset-top, 0px) + 10px) 10px calc(env(safe-area-inset-bottom, 0px) + 10px)",
+          }}
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) closeStudentsManage();
+          }}
+        >
+          <div
+            style={{
+              width: "min(1400px, 100%)",
+              background: "rgba(255,255,255,0.92)",
+              border: "1px solid rgba(31,42,68,0.14)",
+              borderRadius: 18,
+              boxShadow: "0 18px 60px rgba(0,0,0,0.22)",
+              overflow: "hidden",
+              display: "flex",
+              flexDirection: "column",
+            }}
+          >
+            <div
+              style={{
+                position: "sticky",
+                top: 0,
+                zIndex: 2,
+                background: "rgba(255,255,255,0.92)",
+                backdropFilter: "blur(10px)",
+                borderBottom: "1px solid rgba(31,42,68,0.10)",
+                padding: "10px 12px",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: 10,
+              }}
+            >
+              <div style={{ fontWeight: 1000, color: COLORS.text }}>
+                학생관리 (현재 학생: <span style={{ color: COLORS.blue }}>{student?.name || "-"}</span>)
+              </div>
+
+              <button type="button" style={btnPrimary} onClick={closeStudentsManage}>
+                닫기
+              </button>
+            </div>
+
+            <div style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
+              <StudentsPage />
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

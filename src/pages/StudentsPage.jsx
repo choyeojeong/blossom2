@@ -1,5 +1,5 @@
 // src/pages/StudentsPage.jsx
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "../utils/supabaseClient";
 
 const COLORS = {
@@ -16,7 +16,6 @@ const COLORS = {
 };
 
 const WEEKDAYS = [
-  // ✅ 일요일(0) 제외: 우리 학원 휴무
   { v: 1, label: "월" },
   { v: 2, label: "화" },
   { v: 3, label: "수" },
@@ -255,7 +254,12 @@ const emptyForm = () => ({
   extras_winter: {},
 });
 
-export default function StudentsPage() {
+export default function StudentsPage({
+  // ✅ 추가: 임베드(모달)로 띄울 때 레이아웃을 조금 다르게 하고 싶으면 사용
+  embedded = false,
+  // ✅ 추가: 열리자마자 특정 학생 자동 수정 불러오기
+  initialEditStudentId = null,
+}) {
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
@@ -269,6 +273,9 @@ export default function StudentsPage() {
   const [q, setQ] = useState("");
 
   const [withdrawModal, setWithdrawModal] = useState({ open: false, student: null, date: "" });
+
+  // ✅ 자동 startEdit 한 번만
+  const didAutoEditRef = useRef(false);
 
   const filtered = useMemo(() => {
     const keyword = (q || "").trim().toLowerCase();
@@ -353,10 +360,28 @@ export default function StudentsPage() {
     loadAll();
   }, []);
 
+  // ✅ 추가: initialEditStudentId가 들어오면, rows 로드 후 자동으로 startEdit
+  useEffect(() => {
+    if (!initialEditStudentId) return;
+    if (!rows.length) return;
+    if (didAutoEditRef.current) return;
+
+    const target = rows.find((r) => r.id === initialEditStudentId);
+    if (!target) return;
+
+    didAutoEditRef.current = true;
+    startEdit(target);
+    // 검색어도 살짝 맞춰주면 UX 좋음(원치 않으면 지워도 됨)
+    // setQ(target.name || "");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialEditStudentId, rows]);
+
   function resetForm() {
     setForm(emptyForm());
     setErr("");
     setMsg("");
+    // ✅ 모달에서 다시 열 때 자동 edit 다시 되도록
+    didAutoEditRef.current = false;
   }
 
   function validateTimeHHMM(t) {
@@ -388,7 +413,6 @@ export default function StudentsPage() {
     const digits = normalizePhoneDigits(f.phone_digits);
     if (!/^[0-9]{8,11}$/.test(digits)) return "휴대폰번호는 '-' 없이 숫자만(8~11자리) 입력해주세요.";
 
-    // 요일은 1~6만 (일요일 없음)
     const mustWeekdays = [
       ["term_oto_weekday", "학기중 일대일 요일"],
       ["term_read_weekday", "학기중 독해 요일"],
@@ -400,7 +424,6 @@ export default function StudentsPage() {
       if (!(v >= 1 && v <= 6)) return `${label}은(는) 월~토만 선택 가능해요.`;
     }
 
-    // 시간 형식 검증(HH:MM)
     const mustTimes = [
       ["term_oto_test_time", "학기중 일대일 테스트 시간"],
       ["term_oto_class_time", "학기중 일대일 수업 시간"],
@@ -413,7 +436,6 @@ export default function StudentsPage() {
       if (!validateTimeHHMM(f[k])) return `${label}은(는) 24시 기준 HH:MM(예: 13:00) 형식으로 입력해주세요.`;
     }
 
-    // 추가등원: 체크된 요일은 시간 필수 + 형식 검증
     const checkExtras = (extras, seasonLabel) => {
       for (const wdStr of Object.keys(extras || {})) {
         const wd = Number(wdStr);
@@ -488,15 +510,12 @@ export default function StudentsPage() {
         saved = data;
       }
 
-      // ✅ extras 동기화(시즌별 기존 삭제 후 삽입)
       const syncSeason = async (season, extrasMap) => {
         const sid = saved?.id;
 
-        // ✅ 핵심: sid/season이 비정상이면 DELETE 자체를 막아서 "WHERE clause" 에러 원천 차단
         if (!sid) throw new Error("저장된 학생 id가 없습니다. (saved.id)");
         if (season !== "term" && season !== "winter") throw new Error(`잘못된 season 값: ${season}`);
 
-        // ✅ 더 안전한 match 사용 (조건 누락 가능성 최소화)
         const { error: delErr } = await supabase.from("student_extra_rules").delete().match({ student_id: sid, season });
         if (delErr) throw delErr;
 
@@ -572,7 +591,7 @@ export default function StudentsPage() {
         extras_winter: extrasWinter,
       });
 
-      // ✅ 수정 시작할 때는 위로 올라가도 자연스러워서 유지
+      // ✅ 임베드로 띄울 땐 스크롤 점프 덜 거슬리게: 그래도 편하니까 유지
       window.scrollTo({ top: 0, behavior: "smooth" });
     } catch (e) {
       console.error(e);
@@ -597,7 +616,6 @@ export default function StudentsPage() {
   }
 
   function setExtraTime(season, weekday, timeStr) {
-    // 입력 중에는 검증하지 않고 그대로 넣고, 저장 시 검증
     setForm((prev) => {
       const key = season === "term" ? "extras_term" : "extras_winter";
       const cur = { ...(prev[key] || {}) };
@@ -621,7 +639,6 @@ export default function StudentsPage() {
       const winter_oto_class_time = isSatOto ? prev.term_oto_class_time : shiftMinus3HoursHHMM(prev.term_oto_class_time);
       const winter_read_class_time = isSatRead ? prev.term_read_class_time : shiftMinus3HoursHHMM(prev.term_read_class_time);
 
-      // 추가등원: 요일별 (토요일은 그대로)
       const nextExtrasWinter = {};
       const termMap = prev.extras_term || {};
       for (const wdStr of Object.keys(termMap)) {
@@ -713,9 +730,15 @@ export default function StudentsPage() {
     </div>
   );
 
+  // ✅ 임베드 모드면 배경/패딩을 덜 “페이지처럼” 보이게
+  const rootStyle = embedded ? { minHeight: "100%", background: "transparent" } : { minHeight: "100vh", background: COLORS.bg };
+  const wrapStyle = embedded
+    ? { width: "100%", margin: "0 auto", padding: "16px 14px 30px" }
+    : { width: "min(1200px, 100%)", margin: "0 auto", padding: "26px 16px 80px" };
+
   return (
-    <div style={{ minHeight: "100vh", background: COLORS.bg }}>
-      <div style={{ width: "min(1200px, 100%)", margin: "0 auto", padding: "26px 16px 80px" }}>
+    <div style={rootStyle}>
+      <div style={wrapStyle}>
         {/* 헤더 */}
         <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
           <div>
@@ -960,7 +983,6 @@ export default function StudentsPage() {
           </div>
         </div>
 
-        {/* ✅ 아래 저장 버튼 추가 */}
         {bottomSave}
 
         <ThinDivider />
