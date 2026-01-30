@@ -34,9 +34,12 @@ export default function OneToOneTodosPage() {
   const [students, setStudents] = useState([]); // {id,name,school,grade,teacher_name}
   const [todos, setTodos] = useState([]); // rows from student_todos for selected date
 
-  // editing state
+  // drafts
   const [editMap, setEditMap] = useState({}); // { [todoId]: text }
   const [addMap, setAddMap] = useState({}); // { [studentId]: text }
+
+  // ✅ 편집 모드(수정 버튼 눌러야 입력칸 보이게)
+  const [editingMap, setEditingMap] = useState({}); // { [todoId]: true }
 
   const safeTeacher = teacherName || "";
   const studentIdsRef = useRef(new Set()); // realtime filter용
@@ -50,6 +53,7 @@ export default function OneToOneTodosPage() {
     if (!students.length) {
       setTodos([]);
       setEditMap({});
+      setEditingMap({});
       studentIdsRef.current = new Set();
       return;
     }
@@ -90,6 +94,7 @@ export default function OneToOneTodosPage() {
       if (studentIds.length === 0) {
         setTodos([]);
         setEditMap({});
+        setEditingMap({});
         return;
       }
 
@@ -111,9 +116,13 @@ export default function OneToOneTodosPage() {
         next[r.id] = (r.text ?? "").toString();
       });
       setEditMap(next);
+
+      // 날짜 바뀌면 편집모드 정리(원하면 유지해도 되지만, 기본은 깔끔하게)
+      setEditingMap({});
     } catch (e) {
       setTodos([]);
       setEditMap({});
+      setEditingMap({});
       setErr(e?.message || "할일 불러오기 실패");
     } finally {
       setLoading(false);
@@ -158,6 +167,7 @@ export default function OneToOneTodosPage() {
               return merged;
             });
 
+            // 편집중이 아니면 최신값 반영
             setEditMap((m) => ({
               ...m,
               [nextRow.id]: (nextRow.text ?? "").toString(),
@@ -182,6 +192,11 @@ export default function OneToOneTodosPage() {
             if (shouldRemove) {
               setTodos((arr) => arr.filter((x) => x.id !== oldRow.id));
               setEditMap((m) => {
+                const next = { ...m };
+                delete next[oldRow.id];
+                return next;
+              });
+              setEditingMap((m) => {
                 const next = { ...m };
                 delete next[oldRow.id];
                 return next;
@@ -211,10 +226,12 @@ export default function OneToOneTodosPage() {
                 return merged;
               });
 
-              setEditMap((m) => ({
-                ...m,
-                [nextRow.id]: (nextRow.text ?? "").toString(),
-              }));
+              // ✅ 사용자가 편집중이면(내가 수정중) draft를 덮어쓰지 않음
+              setEditMap((m) => {
+                const isEditing = !!editingMap?.[nextRow.id];
+                if (isEditing) return m;
+                return { ...m, [nextRow.id]: (nextRow.text ?? "").toString() };
+              });
             }
 
             return;
@@ -230,6 +247,11 @@ export default function OneToOneTodosPage() {
               delete next[oldRow.id];
               return next;
             });
+            setEditingMap((m) => {
+              const next = { ...m };
+              delete next[oldRow.id];
+              return next;
+            });
             return;
           }
         }
@@ -239,7 +261,7 @@ export default function OneToOneTodosPage() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [safeTeacher, dateStr]);
+  }, [safeTeacher, dateStr, editingMap]);
 
   const todosByStudent = useMemo(() => {
     const map = new Map();
@@ -269,6 +291,17 @@ export default function OneToOneTodosPage() {
     setAddMap((m) => ({ ...m, [studentId]: val }));
   }
 
+  function startEdit(todoId) {
+    setEditingMap((m) => ({ ...m, [todoId]: true }));
+  }
+  function stopEdit(todoId) {
+    setEditingMap((m) => {
+      const next = { ...m };
+      delete next[todoId];
+      return next;
+    });
+  }
+
   async function saveTodo(todo) {
     const text = (editMap[todo.id] ?? "").trim();
     if (!text) {
@@ -284,6 +317,7 @@ export default function OneToOneTodosPage() {
       if (error) throw error;
 
       setTodos((arr) => arr.map((r) => (r.id === todo.id ? { ...r, text } : r)));
+      stopEdit(todo.id); // ✅ 저장하면 편집 종료(네모 줄이기)
     } catch (e) {
       setErr(e?.message || "저장 실패");
     } finally {
@@ -303,6 +337,11 @@ export default function OneToOneTodosPage() {
 
       setTodos((arr) => arr.filter((r) => r.id !== todo.id));
       setEditMap((m) => {
+        const next = { ...m };
+        delete next[todo.id];
+        return next;
+      });
+      setEditingMap((m) => {
         const next = { ...m };
         delete next[todo.id];
         return next;
@@ -387,11 +426,24 @@ export default function OneToOneTodosPage() {
     textOverflow: "ellipsis",
   };
 
-  const todoRow = {
+  // ✅ 한 줄(row)만 보이게(네모 안 네모 최소화)
+  const todoLine = {
     display: "grid",
     gridTemplateColumns: "1fr auto",
-    gap: 6,
+    gap: 8,
     alignItems: "center",
+    padding: "7px 0",
+    borderBottom: `1px solid ${COLORS.lineSoft}`,
+  };
+
+  const todoText = {
+    fontSize: 13.5,
+    fontWeight: 750,
+    color: COLORS.text,
+    lineHeight: 1.35,
+    whiteSpace: "pre-wrap",
+    wordBreak: "break-word",
+    overflowWrap: "anywhere",
   };
 
   const input = {
@@ -408,10 +460,12 @@ export default function OneToOneTodosPage() {
     minWidth: 0,
   };
 
-  const iconBtn = (tone = "save", disabled = false) => {
-    const bg = tone === "save" ? "rgba(47,111,237,0.12)" : "rgba(180,35,24,0.10)";
+  const iconBtn = (tone = "edit", disabled = false) => {
+    // edit/save는 파랑톤, delete는 빨강톤
+    const isDel = tone === "del";
+    const bg = isDel ? "rgba(180,35,24,0.10)" : "rgba(47,111,237,0.12)";
     const bd = `1px solid ${COLORS.line}`;
-    const color = tone === "save" ? COLORS.text : COLORS.danger;
+    const color = isDel ? COLORS.danger : COLORS.text;
     return {
       width: 30,
       height: 30,
@@ -593,53 +647,67 @@ export default function OneToOneTodosPage() {
                         </div>
                       </div>
 
-                      {/* 할일 목록: 저장/삭제 아이콘을 할일 옆에 */}
-                      <div style={{ display: "grid", gap: 8 }}>
-                        {list.map((t) => {
+                      {/* ✅ 할일 목록: 기본은 텍스트(입력칸 X), 수정 눌러야 입력칸 */}
+                      <div
+                        style={{
+                          borderTop: `1px solid ${COLORS.lineSoft}`,
+                          paddingTop: 4,
+                        }}
+                      >
+                        {list.map((t, idx) => {
                           const isBusy = busyKey === t.id;
+                          const isEditing = !!editingMap[t.id];
                           const val = editMap[t.id] ?? t.text ?? "";
 
                           return (
                             <div
                               key={t.id}
                               style={{
-                                border: `1px solid ${COLORS.lineSoft}`,
-                                background: "rgba(255,255,255,0.55)",
-                                borderRadius: 12,
-                                padding: 8,
+                                ...todoLine,
+                                borderBottom:
+                                  idx === list.length - 1 ? "none" : `1px solid ${COLORS.lineSoft}`,
                               }}
                             >
-                              <div style={todoRow}>
+                              {/* 왼쪽: 텍스트 or 입력 */}
+                              {isEditing ? (
                                 <input
                                   value={val}
                                   onChange={(e) => setEdit(t.id, e.target.value)}
                                   placeholder="할일"
                                   style={input}
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter") saveTodo(t);
+                                    if (e.key === "Escape") stopEdit(t.id);
+                                  }}
+                                  autoFocus
                                 />
+                              ) : (
+                                <div style={todoText}>{(t.text ?? "").toString()}</div>
+                              )}
 
-                                <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                                  <button
-                                    type="button"
-                                    disabled={isBusy}
-                                    onClick={() => saveTodo(t)}
-                                    style={iconBtn("save", isBusy)}
-                                    title="저장"
-                                    aria-label="저장"
-                                  >
-                                    ✓
-                                  </button>
+                              {/* 오른쪽: 버튼 2개(수정/저장 + 삭제) */}
+                              <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                                <button
+                                  type="button"
+                                  disabled={isBusy}
+                                  onClick={() => (isEditing ? saveTodo(t) : startEdit(t.id))}
+                                  style={iconBtn("edit", isBusy)}
+                                  title={isEditing ? "저장" : "수정"}
+                                  aria-label={isEditing ? "저장" : "수정"}
+                                >
+                                  {isEditing ? "✓" : "✎"}
+                                </button>
 
-                                  <button
-                                    type="button"
-                                    disabled={isBusy}
-                                    onClick={() => deleteTodo(t)}
-                                    style={iconBtn("del", isBusy)}
-                                    title="삭제"
-                                    aria-label="삭제"
-                                  >
-                                    ✕
-                                  </button>
-                                </div>
+                                <button
+                                  type="button"
+                                  disabled={isBusy}
+                                  onClick={() => deleteTodo(t)}
+                                  style={iconBtn("del", isBusy)}
+                                  title="삭제"
+                                  aria-label="삭제"
+                                >
+                                  ✕
+                                </button>
                               </div>
                             </div>
                           );
