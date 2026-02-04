@@ -269,6 +269,28 @@ function MonthEndOverlay({ open, onClose, variant = "preview" }) {
   );
 }
 
+/** ✅ "HH:MM[:SS]" 문자열을 오늘 날짜 기준 Date로 변환 */
+function buildTodayDate(todayYYYYMMDD, timeStr) {
+  if (!timeStr) return null;
+  const t = String(timeStr);
+  // "HH:MM" / "HH:MM:SS" 모두 처리
+  const iso = t.length <= 5 ? `${todayYYYYMMDD}T${t}:00` : `${todayYYYYMMDD}T${t}`;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  return d;
+}
+
+/** ✅ 지각 분 계산: now - (makeup_time 우선, 없으면 start_time) */
+function calcLateMinutes({ today, row, now }) {
+  const baseTime = row?.makeup_time || row?.start_time;
+  const scheduled = buildTodayDate(today, baseTime);
+  if (!scheduled) return 0;
+
+  const diffMs = now.getTime() - scheduled.getTime();
+  const mins = Math.floor(diffMs / 60000);
+  return Math.max(0, mins);
+}
+
 export default function KioskPage() {
   const today = useMemo(() => dayjs().format("YYYY-MM-DD"), []);
   const [code, setCode] = useState("");
@@ -368,6 +390,7 @@ export default function KioskPage() {
     return init;
   }
 
+  // ✅ 출석 처리 + late_minutes를 “각 수업 시간 기준”으로 계산해서 저장
   async function markPresent(rows) {
     const now = new Date();
 
@@ -379,20 +402,26 @@ export default function KioskPage() {
       return { updatedCount: 0, updatedIds: [] };
     }
 
-    const ids = toUpdate.map((r) => r.id);
+    const updatedIds = [];
 
-    const { error } = await supabase
-      .from("student_events")
-      .update({
-        attendance_status: "present",
-        attended_at: now.toISOString(),
-        late_minutes: 0,
-      })
-      .in("id", ids);
+    // 오늘 수업 개수는 많아야 몇 개라서(보통 1~3개) 개별 업데이트로 안전하게 처리
+    for (const r of toUpdate) {
+      const late = calcLateMinutes({ today, row: r, now });
 
-    if (error) throw error;
+      const { error } = await supabase
+        .from("student_events")
+        .update({
+          attendance_status: "present",
+          attended_at: now.toISOString(),
+          late_minutes: late,
+        })
+        .eq("id", r.id);
 
-    return { updatedCount: ids.length, updatedIds: ids };
+      if (error) throw error;
+      updatedIds.push(r.id);
+    }
+
+    return { updatedCount: updatedIds.length, updatedIds };
   }
 
   async function checkAndMaybeShowMonthEndReward(studentId) {
