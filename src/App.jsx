@@ -24,9 +24,9 @@ import LecturesPage from "./pages/LecturesPage";
 import OneToOneScheduleSelectPage from "./pages/OneToOneScheduleSelectPage";
 import OneToOneSchedulePage from "./pages/OneToOneSchedulePage";
 
-// ✅ ✅ 새로 추가: 선생님 허브(시간표보기/날짜별할일보기)
+// ✅ 선생님 허브(시간표보기/날짜별할일보기)
 import TeacherOneToOneHubPage from "./pages/TeacherOneToOneHubPage";
-// ✅ ✅ 새로 추가: 날짜별 할일 보기(뼈대)
+// ✅ 날짜별 할일 보기
 import OneToOneTodosPage from "./pages/OneToOneTodosPage";
 
 // ✅ 독해 시간표
@@ -44,8 +44,12 @@ import GradesPage from "./pages/grades/GradesPage";
 import StudentGradesPage from "./pages/grades/StudentGradesPage";
 import ScoreQueryPage from "./pages/grades/ScoreQueryPage";
 
-// ✅ 학부모 연락양식 (복구)
+// ✅ 학부모 연락양식
 import ContactFormsPage from "./pages/ContactFormsPage";
+
+// ✅ 상담관리 (신규)
+import CounselingPage from "./pages/CounselingPage";
+import CounselingSessionPage from "./pages/CounselingSessionPage";
 
 import { isAuthed } from "./utils/auth";
 
@@ -142,7 +146,7 @@ export default function App() {
             element={<OneToOneSchedulePage />}
           />
 
-          {/* ✅ 날짜별할일보기: 새 페이지(뼈대) */}
+          {/* ✅ 날짜별할일보기 */}
           <Route
             path="/one-to-one/:teacherName/todos"
             element={<OneToOneTodosPage />}
@@ -168,6 +172,13 @@ export default function App() {
 
           {/* ✅ 학부모 연락양식 */}
           <Route path="/contact-forms" element={<ContactFormsPage />} />
+
+          {/* ✅ 상담관리 */}
+          <Route path="/counseling" element={<CounselingPage />} />
+          <Route
+            path="/counseling/:sessionId"
+            element={<CounselingSessionPage />}
+          />
         </Route>
 
         {/* 그 외 */}
