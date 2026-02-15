@@ -20,7 +20,6 @@ const COLORS = {
   // PDF
   pdfTop: "#eef4ff",
   pdfTop2: "#f7f9fc",
-  pdfLine: "rgba(31,42,68,0.12)",
   pdfLineSoft: "rgba(31,42,68,0.08)",
   chipBg: "rgba(47,111,237,0.10)",
   chipBd: "rgba(47,111,237,0.25)",
@@ -124,11 +123,9 @@ function positionBand(score, sortedAsc) {
   const s = Number(score);
   if (!Number.isFinite(s) || n === 0) return { band: "-", percentile: null };
 
-  // score 이하 개수로 퍼센타일(대충) 계산
   let le = 0;
   for (let i = 0; i < n; i++) if (sortedAsc[i] <= s) le++;
   const pct = le / n; // 0~1
-  // pct가 클수록 상위 (점수 높음)
   if (pct >= 2 / 3) return { band: "상", percentile: pct };
   if (pct >= 1 / 3) return { band: "중", percentile: pct };
   return { band: "하", percentile: pct };
@@ -140,19 +137,13 @@ function buildComment({ band, deltaFromAvg }) {
   const dText = hasD ? `${Math.abs(d).toFixed(1)}점` : "-";
   const upDown = !hasD ? "" : d > 0 ? "높아요" : d < 0 ? "낮아요" : "같아요";
 
-  if (band === "상") {
-    return `이번 회차는 평균보다 ${dText} ${upDown}. 전반적으로 상위권(상) 성적입니다.`;
-  }
-  if (band === "중") {
-    return `이번 회차는 평균과 비교했을 때 ${dText} 정도 차이가 있습니다. 중위권(중)에 해당합니다.`;
-  }
-  if (band === "하") {
-    return `이번 회차는 평균보다 ${dText} ${upDown}. 하위권(하)으로 분류되며, 다음 회차에서 점수 상승을 목표로 해보면 좋아요.`;
-  }
+  if (band === "상") return `이번 회차는 평균보다 ${dText} ${upDown}. 전반적으로 상위권(상) 성적입니다.`;
+  if (band === "중") return `이번 회차는 평균과 비교했을 때 ${dText} 정도 차이가 있습니다. 중위권(중)에 해당합니다.`;
+  if (band === "하") return `이번 회차는 평균보다 ${dText} ${upDown}. 하위권(하)으로 분류되며, 다음 회차에서 점수 상승을 목표로 해보면 좋아요.`;
   return `이번 회차 결과 요약을 확인해주세요.`;
 }
 
-// 그래프 점이 너무 많으면 라벨/선이 지저분해져서 샘플링(최대 18개)
+// 그래프 점이 너무 많으면 샘플링(최대 18개)
 function samplePoints(points, max = 18) {
   if (!Array.isArray(points)) return [];
   if (points.length <= max) return points;
@@ -163,6 +154,16 @@ function samplePoints(points, max = 18) {
     out.push(points[idx]);
   }
   return out;
+}
+
+// ✅ 파일 다운로드(이미지)
+function downloadDataUrl(dataUrl, filename) {
+  const a = document.createElement("a");
+  a.href = dataUrl;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
 }
 
 export default function ScoreQueryPage() {
@@ -203,11 +204,12 @@ export default function ScoreQueryPage() {
   }, [type]);
 
   // =========================
-  // ✅ PDF
+  // ✅ PDF/IMG 렌더
   // =========================
-  const [pdfLoadingId, setPdfLoadingId] = useState(null);
-  const [pdfModel, setPdfModel] = useState(null);
-  const pdfRef = useRef(null);
+  const [exportLoadingId, setExportLoadingId] = useState(null); // row.id
+  const [exportMode, setExportMode] = useState(null); // "pdf" | "png"
+  const [reportModel, setReportModel] = useState(null);
+  const reportRef = useRef(null);
 
   async function search() {
     setLoading(true);
@@ -220,11 +222,7 @@ export default function ScoreQueryPage() {
       if (teacherName.trim()) q = q.eq("student_teacher_name", teacherName.trim());
 
       if (type === "school_exam") {
-        q = q
-          .eq("year", Number(year))
-          .eq("school_grade", schoolGrade)
-          .eq("semester", semester)
-          .eq("exam_kind", examKind);
+        q = q.eq("year", Number(year)).eq("school_grade", schoolGrade).eq("semester", semester).eq("exam_kind", examKind);
       } else if (type === "mock_exam") {
         q = q.eq("year", Number(mockYear)).eq("school_grade", mockGrade).eq("month", Number(mockMonth));
       } else {
@@ -264,12 +262,8 @@ export default function ScoreQueryPage() {
         "이전 대비 등급": trendText(r.grade_trend_symbol, r.grade_delta),
       };
 
-      if (type === "school_exam") {
-        return { ...base, 유형: "내신", 연도: r.year ?? "", 학년선택: r.school_grade ?? "", 학기: r.semester ?? "", 시험: r.exam_kind ?? "" };
-      }
-      if (type === "mock_exam") {
-        return { ...base, 유형: "모의고사", 연도: r.year ?? "", 학년선택: r.school_grade ?? "", 월: r.month ?? "" };
-      }
+      if (type === "school_exam") return { ...base, 유형: "내신", 연도: r.year ?? "", 학년선택: r.school_grade ?? "", 학기: r.semester ?? "", 시험: r.exam_kind ?? "" };
+      if (type === "mock_exam") return { ...base, 유형: "모의고사", 연도: r.year ?? "", 학년선택: r.school_grade ?? "", 월: r.month ?? "" };
       return { ...base, 유형: "기타 학원 모의고사", 날짜: r.exam_date ?? "", 종류: r.title ?? "" };
     });
 
@@ -279,32 +273,39 @@ export default function ScoreQueryPage() {
     XLSX.writeFile(wb, `성적데이터_${type}_${new Date().toISOString().slice(0, 10)}.xlsx`);
   }
 
-  // ✅ A4 한 장 고정: PDF 렌더 영역을 고정 높이로 만들고 넘치는건 숨김
-  // 860px 너비 기준 A4 비율로 대략 1216px 정도(실사용에서 가장 안정적인 값)
-  const PDF_W = 860;
-  const PDF_H = 1216; // 1장 고정 높이
+  // ✅ A4 한 장 고정
+  const REPORT_W = 860;
+  const REPORT_H = 1216;
 
-  async function buildAndExportAcademyMockPdf(row) {
+  async function exportAcademyMockReport(row, mode /* "pdf" | "png" */) {
     if (!row) return;
     if (!row.student_id) {
       alert("student_scores_enriched 뷰에 student_id가 포함되어 있는지 확인해주세요.");
       return;
     }
-    if (!row.exam_date || !row.title) {
-      alert("academy_mock PDF는 exam_date와 title이 필요해요.");
+    if (!row.title) {
+      alert("academy_mock 리포트는 title(회차)이 필요해요.");
       return;
     }
 
-    setPdfLoadingId(row.id);
+    setExportLoadingId(row.id);
+    setExportMode(mode);
     try {
-      // 1) 해당 회차 전체 응시자 (같은 exam_date + title)
-      const { data: examAll, error: examErr } = await supabase
+      // =========================
+      // ✅ (핵심 수정) 통계 집계: 날짜(exam_date) 제외, 회차(title) 기준
+      //  - 날짜가 학생마다 달라도 동일 회차면 모두 응시자로 포함
+      // =========================
+      let qExam = supabase
         .from("student_scores_enriched")
         .select("id, student_id, score, exam_date, title")
         .eq("type", "academy_mock")
-        .eq("exam_date", row.exam_date)
         .eq("title", row.title);
 
+      // ✅ 동일 제목을 해마다 쓸 가능성 대비: row.exam_date가 있으면 해당 연도 범위로 제한(권장)
+      const y = String(row.exam_date || "").slice(0, 4);
+      if (y) qExam = qExam.gte("exam_date", `${y}-01-01`).lte("exam_date", `${y}-12-31`);
+
+      const { data: examAll, error: examErr } = await qExam;
       if (examErr) throw examErr;
 
       const stats = calcStats((examAll || []).map((x) => x.score));
@@ -314,7 +315,7 @@ export default function ScoreQueryPage() {
       const pos = positionBand(myScore, stats.sorted);
       const comment = buildComment({ band: pos.band, deltaFromAvg });
 
-      // 2) 해당 학생 academy_mock 히스토리(회차 순)
+      // 학생 히스토리(회차 순)
       const { data: hist, error: histErr } = await supabase
         .from("student_scores_enriched")
         .select("id, exam_date, title, score, created_at")
@@ -341,11 +342,10 @@ export default function ScoreQueryPage() {
         return (a.created_at || "").localeCompare(b.created_at || "");
       });
 
-      // ✅ 1장에 맞추기 위해 표는 최근 8개만(그래프는 샘플링해서 깔끔하게)
       const history = historyRaw;
       const historyRecent = history.slice(Math.max(0, history.length - 8));
 
-      const deltasRecent = historyRecent.map((h, idx) => {
+      const deltasRecent = historyRecent.map((h) => {
         const globalIdx = history.indexOf(h);
         if (globalIdx <= 0) return { scoreDelta: null, gradeDelta: null };
         const prev = history[globalIdx - 1];
@@ -362,78 +362,71 @@ export default function ScoreQueryPage() {
       };
 
       const exam = {
-        exam_date: row.exam_date,
+        exam_date: row.exam_date || (examAll?.map((x) => x.exam_date).sort().slice(-1)[0] || ""), // 대표로 최신 날짜
         title: row.title,
         roundNo: parseRoundNo(row.title),
         score: row.score,
         gradeLabel: gradeLabelFromScore(row.score),
       };
 
-      // 그래프 포인트(회차 라벨)
       const pointsAll = history.map((h) => {
         const rno = parseRoundNo(h.title);
-        return {
-          xLabel: Number.isFinite(rno) ? `${rno}회` : (h.title || "").slice(0, 5),
-          y: Number(h.score),
-        };
+        return { xLabel: Number.isFinite(rno) ? `${rno}회` : (h.title || "").slice(0, 5), y: Number(h.score) };
       });
-      const points = samplePoints(pointsAll, 18);
+      const chartPoints = samplePoints(pointsAll, 18);
 
-      setPdfModel({
+      setReportModel({
         academyName: "산본 블라썸에듀",
         student,
         exam,
         stats,
-        my: {
-          score: myScore,
-          gradeLabel: gradeLabelFromScore(myScore),
-          deltaFromAvg,
-          band: pos.band,
-          comment,
-        },
-        chartPoints: points,
-        table: {
-          historyRecent,
-          deltasRecent,
-        },
+        my: { score: myScore, gradeLabel: gradeLabelFromScore(myScore), deltaFromAvg, band: pos.band, comment },
+        chartPoints,
+        table: { historyRecent, deltasRecent },
       });
 
       await new Promise((r) => setTimeout(r, 80));
 
-      const el = pdfRef.current;
-      if (!el) throw new Error("PDF 영역 없음");
+      const el = reportRef.current;
+      if (!el) throw new Error("리포트 영역 없음");
 
-      // ✅ 1장 고정 캡처: 높이 제한 영역만 렌더된 상태라 캔버스도 1장 크기로 나옴
       const canvas = await html2canvas(el, {
         scale: 2,
         backgroundColor: "#ffffff",
         useCORS: true,
       });
 
+      const roundText = exam.roundNo ? `${exam.roundNo}회` : safeFileName(exam.title);
+      const baseName = `학원모의_${safeFileName(student.name)}_${roundText}_${exam.exam_date || "날짜없음"}`;
+
+      if (mode === "png") {
+        const dataUrl = canvas.toDataURL("image/png");
+        downloadDataUrl(dataUrl, `${baseName}.png`);
+        return;
+      }
+
+      // PDF
       const imgData = canvas.toDataURL("image/png");
       const pdf = new jsPDF("p", "mm", "a4");
-
       const pageW = 210;
       const pageH = 297;
       const imgW = pageW;
       const imgH = (canvas.height * imgW) / canvas.width;
 
-      // A4에 꽉 맞게 (이미 1장 레이아웃이라 대부분 1장으로 딱 맞음)
-      const y = (pageH - imgH) / 2; // 남는 공간 중앙정렬(거의 0에 가까움)
-      pdf.addImage(imgData, "PNG", 0, y, imgW, imgH);
-
-      const roundText = exam.roundNo ? `${exam.roundNo}회` : safeFileName(exam.title);
-      pdf.save(`학원모의_${safeFileName(student.name)}_${roundText}_${exam.exam_date}.pdf`);
+      const yPos = (pageH - imgH) / 2;
+      pdf.addImage(imgData, "PNG", 0, yPos, imgW, imgH);
+      pdf.save(`${baseName}.pdf`);
     } catch (e) {
       console.error(e);
-      alert("PDF 생성 실패");
+      alert(mode === "png" ? "이미지 생성 실패" : "PDF 생성 실패");
     } finally {
-      setPdfLoadingId(null);
+      setExportLoadingId(null);
+      setExportMode(null);
     }
   }
 
   // =========================
-  // ✅ PDF 내부 그래프 (SVG)
+  // ✅ 리포트 내부 그래프 (SVG)
   // =========================
   function LineChart({ points, width = 800, height = 220, padding = 26 }) {
     const ys = points.map((p) => p.y).filter((v) => Number.isFinite(v));
@@ -490,9 +483,6 @@ export default function ScoreQueryPage() {
     );
   }
 
-  // =========================
-  // UI
-  // =========================
   return (
     <div style={{ maxWidth: 1500, margin: "26px auto", padding: 20 }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
@@ -502,7 +492,7 @@ export default function ScoreQueryPage() {
             조건을 걸어 성적 데이터를 모아서 보고, 엑셀로 내보낼 수 있어요.
             {type === "academy_mock" ? (
               <div style={{ marginTop: 6, color: COLORS.sub }}>
-                · <b>PDF</b>를 누르면 <b>1장 리포트</b>(요약+그래프+최근기록+로고)가 생성돼요.
+                · 우측 버튼으로 <b>PDF</b> 또는 <b>이미지(PNG)</b>로 다운로드할 수 있어요(카톡 전송용).
               </div>
             ) : null}
           </div>
@@ -639,7 +629,7 @@ export default function ScoreQueryPage() {
                 <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} style={input} />
               </Field>
               <Field label="회차/종류(title, 부분검색)">
-                <input value={title} onChange={(e) => setTitle(e.target.value)} style={input} placeholder="예: 모의고사 3회" />
+                <input value={title} onChange={(e) => setTitle(e.target.value)} style={input} placeholder="예: 모의고사 6회차" />
               </Field>
               <div />
               <div />
@@ -673,7 +663,7 @@ export default function ScoreQueryPage() {
               <Th>이전 대비 점수</Th>
               <Th>이전 대비 등급</Th>
               <Th>기준</Th>
-              {type === "academy_mock" ? <Th>PDF</Th> : null}
+              {type === "academy_mock" ? <Th>다운로드</Th> : null}
             </tr>
           </thead>
           <tbody>
@@ -685,7 +675,9 @@ export default function ScoreQueryPage() {
               </tr>
             ) : (
               rows.map((r) => {
-                const showGrade = type === "academy_mock" ? gradeLabelFromScore(r.score) : (r.grade_label || "-");
+                const showGrade = type === "academy_mock" ? gradeLabelFromScore(r.score) : r.grade_label || "-";
+                const busy = exportLoadingId === r.id;
+
                 return (
                   <tr key={r.id}>
                     <Td>{r.student_name}</Td>
@@ -722,24 +714,26 @@ export default function ScoreQueryPage() {
 
                     {type === "academy_mock" ? (
                       <Td>
-                        <button
-                          type="button"
-                          onClick={() => buildAndExportAcademyMockPdf(r)}
-                          style={{
-                            height: 32,
-                            padding: "0 10px",
-                            borderRadius: 10,
-                            border: `1px solid ${COLORS.border}`,
-                            background: "#fff",
-                            color: COLORS.text,
-                            fontWeight: 900,
-                            cursor: "pointer",
-                            opacity: pdfLoadingId === r.id ? 0.6 : 1,
-                          }}
-                          disabled={pdfLoadingId === r.id}
-                        >
-                          {pdfLoadingId === r.id ? "생성중…" : "PDF"}
-                        </button>
+                        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                          <button
+                            type="button"
+                            onClick={() => exportAcademyMockReport(r, "pdf")}
+                            style={{ ...miniBtn, opacity: busy ? 0.55 : 1 }}
+                            disabled={busy}
+                            title="PDF 다운로드"
+                          >
+                            {busy && exportMode === "pdf" ? "PDF…" : "PDF"}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => exportAcademyMockReport(r, "png")}
+                            style={{ ...miniBtn, opacity: busy ? 0.55 : 1 }}
+                            disabled={busy}
+                            title="이미지(PNG) 다운로드"
+                          >
+                            {busy && exportMode === "png" ? "IMG…" : "IMG"}
+                          </button>
+                        </div>
                       </Td>
                     ) : null}
                   </tr>
@@ -750,19 +744,19 @@ export default function ScoreQueryPage() {
         </table>
       </div>
 
-      {/* ✅ PDF 렌더 영역(화면 밖) */}
-      <div style={{ position: "absolute", left: -99999, top: -99999, width: PDF_W }}>
-        {pdfModel ? (
+      {/* ✅ 리포트 렌더 영역(화면 밖) */}
+      <div style={{ position: "absolute", left: -99999, top: -99999, width: REPORT_W }}>
+        {reportModel ? (
           <div
-            ref={pdfRef}
+            ref={reportRef}
             style={{
-              width: PDF_W,
-              height: PDF_H, // ✅ 1장 고정
+              width: REPORT_W,
+              height: REPORT_H,
               overflow: "hidden",
               background: "#fff",
               color: COLORS.text,
               fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, Arial",
-              border: "0",
+              position: "relative",
             }}
           >
             {/* 헤더 */}
@@ -775,9 +769,7 @@ export default function ScoreQueryPage() {
             >
               <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
                 <div>
-                  <div style={{ fontSize: 20, fontWeight: 1000, letterSpacing: "-0.2px" }}>
-                    {pdfModel.academyName}
-                  </div>
+                  <div style={{ fontSize: 20, fontWeight: 1000, letterSpacing: "-0.2px" }}>{reportModel.academyName}</div>
                   <div style={{ marginTop: 6, color: COLORS.sub, fontSize: 12 }}>
                     학원 모의고사 성적 리포트
                     <span
@@ -792,21 +784,24 @@ export default function ScoreQueryPage() {
                         fontWeight: 900,
                       }}
                     >
-                      {pdfModel.exam.roundNo ? `모의고사 ${pdfModel.exam.roundNo}회` : pdfModel.exam.title}
+                      {reportModel.exam.roundNo ? `모의고사 ${reportModel.exam.roundNo}회` : reportModel.exam.title}
                     </span>
                   </div>
                 </div>
+
                 <div style={{ textAlign: "right", color: COLORS.sub, fontSize: 12, lineHeight: 1.5 }}>
-                  <div><b>응시일</b> {pdfModel.exam.exam_date}</div>
+                  <div>
+                    <b>응시일</b> {reportModel.exam.exam_date || "-"}
+                  </div>
                   <div>{new Date().toISOString().slice(0, 10)} 생성</div>
                 </div>
               </div>
 
               <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                <InfoRow label="학생이름" value={pdfModel.student.name} />
-                <InfoRow label="담당선생님" value={pdfModel.student.teacher} />
-                <InfoRow label="학교" value={pdfModel.student.school} />
-                <InfoRow label="학년" value={pdfModel.student.grade} />
+                <InfoRow label="학생이름" value={reportModel.student.name} />
+                <InfoRow label="담당선생님" value={reportModel.student.teacher} />
+                <InfoRow label="학교" value={reportModel.student.school} />
+                <InfoRow label="학년" value={reportModel.student.grade} />
               </div>
             </div>
 
@@ -816,41 +811,23 @@ export default function ScoreQueryPage() {
               <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr", gap: 14 }}>
                 <div style={pdfCard}>
                   <div style={pdfLabel}>이번 회차 요약</div>
-                  <div style={{ marginTop: 10, display: "flex", alignItems: "baseline", gap: 12 }}>
-                    <div style={{ fontSize: 42, fontWeight: 1100, letterSpacing: "-0.6px" }}>
-                      {fmtScore(pdfModel.my.score)}
-                    </div>
-                    <div style={{ fontSize: 16, fontWeight: 1000, color: COLORS.blue }}>
-                      {pdfModel.my.gradeLabel}
-                    </div>
-                    <span
-                      style={{
-                        marginLeft: 6,
-                        display: "inline-block",
-                        padding: "4px 10px",
-                        borderRadius: 999,
-                        background: "rgba(31,42,68,0.06)",
-                        color: COLORS.text,
-                        fontWeight: 1000,
-                        fontSize: 12,
-                      }}
-                    >
-                      내 위치: {pdfModel.my.band}
-                    </span>
+                  <div style={{ marginTop: 10, display: "flex", alignItems: "baseline", gap: 12, flexWrap: "wrap" }}>
+                    <div style={{ fontSize: 42, fontWeight: 1100, letterSpacing: "-0.6px" }}>{fmtScore(reportModel.my.score)}</div>
+                    <div style={{ fontSize: 16, fontWeight: 1000, color: COLORS.blue }}>{reportModel.my.gradeLabel}</div>
+                    <span style={pill}>내 위치: {reportModel.my.band}</span>
                   </div>
 
                   <div style={{ marginTop: 10, color: COLORS.sub, fontSize: 12, lineHeight: 1.6 }}>
                     <div>
                       <b>평균 대비</b> :{" "}
-                      <span style={{ fontWeight: 1000, color: (pdfModel.my.deltaFromAvg || 0) >= 0 ? COLORS.blue : COLORS.red }}>
-                        {pdfModel.my.deltaFromAvg === null ? "-" : fmtDelta(pdfModel.my.deltaFromAvg)}점
+                      <span style={{ fontWeight: 1000, color: (reportModel.my.deltaFromAvg || 0) >= 0 ? COLORS.blue : COLORS.red }}>
+                        {reportModel.my.deltaFromAvg === null ? "-" : `${fmtDelta(reportModel.my.deltaFromAvg)}점`}
                       </span>
                     </div>
+
                     <div style={{ marginTop: 8, padding: "10px 12px", borderRadius: 14, background: COLORS.soft, border: `1px solid ${COLORS.pdfLineSoft}` }}>
                       <div style={{ fontSize: 11, color: COLORS.sub, fontWeight: 900, marginBottom: 6 }}>코멘트</div>
-                      <div style={{ fontSize: 12.5, color: COLORS.text, fontWeight: 900, lineHeight: 1.5 }}>
-                        {pdfModel.my.comment}
-                      </div>
+                      <div style={{ fontSize: 12.5, color: COLORS.text, fontWeight: 900, lineHeight: 1.5 }}>{reportModel.my.comment}</div>
                     </div>
                   </div>
                 </div>
@@ -858,43 +835,36 @@ export default function ScoreQueryPage() {
                 <div style={pdfCard}>
                   <div style={pdfLabel}>이번 회차 전체 통계</div>
                   <div style={{ marginTop: 10, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                    <StatBox label="응시자" value={`${pdfModel.stats.count}명`} />
-                    <StatBox label="평균" value={pdfModel.stats.avg === null ? "-" : `${fmtScore(pdfModel.stats.avg)}점`} />
-                    <StatBox label="최고" value={pdfModel.stats.max === null ? "-" : `${fmtScore(pdfModel.stats.max)}점`} />
-                    <StatBox label="최저" value={pdfModel.stats.min === null ? "-" : `${fmtScore(pdfModel.stats.min)}점`} />
-                    <StatBox label="중앙값" value={pdfModel.stats.median === null ? "-" : `${fmtScore(pdfModel.stats.median)}점`} />
+                    <StatBox label="응시자" value={`${reportModel.stats.count}명`} />
+                    <StatBox label="평균" value={reportModel.stats.avg === null ? "-" : `${fmtScore(reportModel.stats.avg)}점`} />
+                    <StatBox label="최고" value={reportModel.stats.max === null ? "-" : `${fmtScore(reportModel.stats.max)}점`} />
+                    <StatBox label="최저" value={reportModel.stats.min === null ? "-" : `${fmtScore(reportModel.stats.min)}점`} />
+                    <StatBox label="중앙값" value={reportModel.stats.median === null ? "-" : `${fmtScore(reportModel.stats.median)}점`} />
                     <div />
                   </div>
 
                   <div style={{ marginTop: 10, color: COLORS.sub, fontSize: 10.5, lineHeight: 1.5 }}>
-                    · 내 위치(상/중/하)는 이번 회차 점수를 기준으로 상위 33% / 중간 33% / 하위 33%로 구분했어요.
+                    · 통계는 <b>회차(title)</b> 기준으로 집계됩니다(응시일이 달라도 같은 회차면 포함).
                   </div>
                 </div>
               </div>
 
-              {/* 추이 그래프 + 최근 기록(간단) */}
+              {/* 추이 그래프 + 최근 기록 */}
               <div style={{ marginTop: 12, ...pdfCard }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", gap: 12 }}>
                   <div>
                     <div style={pdfLabel}>점수 추이</div>
-                    <div style={{ marginTop: 4, color: COLORS.sub, fontSize: 10.5 }}>
-                      · 회차 순서로 정렬 · 점이 많으면 보기 좋게 일부만 표시
-                    </div>
+                    <div style={{ marginTop: 4, color: COLORS.sub, fontSize: 10.5 }}>· 회차 순서로 정렬 · 점이 많으면 일부만 표시</div>
                   </div>
-                  <div style={{ color: COLORS.sub, fontSize: 10.5 }}>
-                    등급 기준: 90~100(1) … 0~19(9)
-                  </div>
+                  <div style={{ color: COLORS.sub, fontSize: 10.5 }}>등급 기준: 90~100(1) … 0~19(9)</div>
                 </div>
 
                 <div style={{ marginTop: 10 }}>
-                  <LineChart points={pdfModel.chartPoints || []} />
+                  <LineChart points={reportModel.chartPoints || []} />
                 </div>
 
-                {/* 최근 기록(간단 표) */}
                 <div style={{ marginTop: 10 }}>
-                  <div style={{ color: COLORS.sub, fontSize: 10.5, fontWeight: 900, marginBottom: 6 }}>
-                    최근 기록(최근 8회)
-                  </div>
+                  <div style={{ color: COLORS.sub, fontSize: 10.5, fontWeight: 900, marginBottom: 6 }}>최근 기록(최근 8회)</div>
                   <table style={{ width: "100%", borderCollapse: "collapse" }}>
                     <thead>
                       <tr>
@@ -905,13 +875,11 @@ export default function ScoreQueryPage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {(pdfModel.table?.historyRecent || []).map((h, idx) => {
-                        const d = (pdfModel.table?.deltasRecent || [])[idx] || {};
+                      {(reportModel.table?.historyRecent || []).map((h, idx) => {
+                        const d = (reportModel.table?.deltasRecent || [])[idx] || {};
                         const sd = d.scoreDelta;
-
                         const rno = parseRoundNo(h.title);
-                        const roundText = Number.isFinite(rno) ? `${rno}회` : (h.title || "-");
-
+                        const roundText = Number.isFinite(rno) ? `${rno}회` : h.title || "-";
                         const sdSymbol = sd === null || sd === undefined ? "-" : sd > 0 ? "▲" : sd < 0 ? "▼" : "-";
                         const sdText = sdSymbol === "-" ? "-" : `${sdSymbol} ${fmtDelta(sd)}`;
 
@@ -921,9 +889,7 @@ export default function ScoreQueryPage() {
                             <td style={pdfTd}>{fmtScore(h.score)}</td>
                             <td style={pdfTd}>{h.gradeLabel}</td>
                             <td style={pdfTd}>
-                              <span style={{ fontWeight: 1000, color: sd > 0 ? COLORS.blue : sd < 0 ? COLORS.red : COLORS.sub }}>
-                                {sdText}
-                              </span>
+                              <span style={{ fontWeight: 1000, color: sd > 0 ? COLORS.blue : sd < 0 ? COLORS.red : COLORS.sub }}>{sdText}</span>
                             </td>
                           </tr>
                         );
@@ -951,7 +917,7 @@ export default function ScoreQueryPage() {
               }}
             >
               <div style={{ color: COLORS.sub, fontSize: 10 }}>
-                © {new Date().getFullYear()} {pdfModel.academyName} · 내부용 리포트
+                © {new Date().getFullYear()} {reportModel.academyName} · 내부용 리포트
               </div>
               <img src={blossomLogo} alt="logo" style={{ width: 52, height: 52, objectFit: "contain", opacity: 0.95 }} />
             </div>
@@ -1005,17 +971,7 @@ function Td({ children }) {
 }
 function InfoRow({ label, value }) {
   return (
-    <div
-      style={{
-        display: "flex",
-        gap: 10,
-        alignItems: "center",
-        padding: "10px 12px",
-        borderRadius: 12,
-        border: `1px solid ${COLORS.pdfLineSoft}`,
-        background: "#fff",
-      }}
-    >
+    <div style={{ display: "flex", gap: 10, alignItems: "center", padding: "10px 12px", borderRadius: 12, border: `1px solid ${COLORS.pdfLineSoft}`, background: "#fff" }}>
       <div style={{ minWidth: 86, color: COLORS.sub, fontSize: 11, fontWeight: 900 }}>{label}</div>
       <div style={{ color: COLORS.text, fontSize: 12, fontWeight: 900 }}>{value || "-"}</div>
     </div>
@@ -1062,6 +1018,17 @@ const btnGhost = {
   cursor: "pointer",
 };
 
+const miniBtn = {
+  height: 32,
+  padding: "0 10px",
+  borderRadius: 10,
+  border: `1px solid ${COLORS.border}`,
+  background: "#fff",
+  color: COLORS.text,
+  fontWeight: 900,
+  cursor: "pointer",
+};
+
 const pdfCard = {
   padding: 14,
   borderRadius: 16,
@@ -1089,4 +1056,14 @@ const pdfTd = {
   borderBottom: `1px solid ${COLORS.pdfLineSoft}`,
   color: COLORS.text,
   fontSize: 11,
+};
+
+const pill = {
+  display: "inline-block",
+  padding: "4px 10px",
+  borderRadius: 999,
+  background: "rgba(31,42,68,0.06)",
+  color: COLORS.text,
+  fontWeight: 1000,
+  fontSize: 12,
 };
