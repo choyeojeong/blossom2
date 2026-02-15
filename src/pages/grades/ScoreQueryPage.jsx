@@ -6,7 +6,6 @@ import html2canvas from "html2canvas";
 import jsPDF from "jspdf";
 import { supabase } from "../../utils/supabaseClient";
 
-// ✅ 로고 파일을 여기에 넣고 경로만 맞추세요.
 import blossomLogo from "../../assets/blossom-logo.png";
 
 const COLORS = {
@@ -17,7 +16,6 @@ const COLORS = {
   blue: "#2f6fed",
   red: "#e04b4b",
 
-  // PDF
   pdfTop: "#eef4ff",
   pdfTop2: "#f7f9fc",
   pdfLineSoft: "rgba(31,42,68,0.08)",
@@ -32,9 +30,7 @@ const SEMESTERS = ["1학기", "2학기"];
 const EXAM_KINDS = ["중간", "기말"];
 const MONTHS = Array.from({ length: 12 }, (_, i) => i + 1);
 
-// =========================
 // ✅ 절대평가 등급 (academy_mock)
-// =========================
 function scoreToAbsoluteGrade(score) {
   const n = Number(score);
   if (!Number.isFinite(n)) return null;
@@ -53,9 +49,6 @@ function gradeLabelFromScore(score) {
   return g ? `${g}등급` : "-";
 }
 
-// =========================
-// ✅ 유틸
-// =========================
 function fmtScore(v) {
   if (v === null || v === undefined || v === "") return "-";
   const n = Number(v);
@@ -82,7 +75,6 @@ function safeFileName(s) {
     .replace(/\s+/g, " ");
 }
 
-// title에서 "n회" 파싱
 function parseRoundNo(title) {
   const t = (title || "").toString();
   let m = t.match(/(\d+)\s*회차/);
@@ -117,46 +109,6 @@ function calcStats(scores) {
   };
 }
 
-// 상/중/하 (상위 33% / 중간 33% / 하위 33%)
-function positionBand(score, sortedAsc) {
-  const n = sortedAsc?.length || 0;
-  const s = Number(score);
-  if (!Number.isFinite(s) || n === 0) return { band: "-", percentile: null };
-
-  let le = 0;
-  for (let i = 0; i < n; i++) if (sortedAsc[i] <= s) le++;
-  const pct = le / n; // 0~1
-  if (pct >= 2 / 3) return { band: "상", percentile: pct };
-  if (pct >= 1 / 3) return { band: "중", percentile: pct };
-  return { band: "하", percentile: pct };
-}
-
-function buildComment({ band, deltaFromAvg }) {
-  const d = Number(deltaFromAvg);
-  const hasD = Number.isFinite(d);
-  const dText = hasD ? `${Math.abs(d).toFixed(1)}점` : "-";
-  const upDown = !hasD ? "" : d > 0 ? "높아요" : d < 0 ? "낮아요" : "같아요";
-
-  if (band === "상") return `이번 회차는 평균보다 ${dText} ${upDown}. 전반적으로 상위권(상) 성적입니다.`;
-  if (band === "중") return `이번 회차는 평균과 비교했을 때 ${dText} 정도 차이가 있습니다. 중위권(중)에 해당합니다.`;
-  if (band === "하") return `이번 회차는 평균보다 ${dText} ${upDown}. 하위권(하)으로 분류되며, 다음 회차에서 점수 상승을 목표로 해보면 좋아요.`;
-  return `이번 회차 결과 요약을 확인해주세요.`;
-}
-
-// 그래프 점이 너무 많으면 샘플링(최대 18개)
-function samplePoints(points, max = 18) {
-  if (!Array.isArray(points)) return [];
-  if (points.length <= max) return points;
-  const step = (points.length - 1) / (max - 1);
-  const out = [];
-  for (let i = 0; i < max; i++) {
-    const idx = Math.round(i * step);
-    out.push(points[idx]);
-  }
-  return out;
-}
-
-// ✅ 파일 다운로드(이미지)
 function downloadDataUrl(dataUrl, filename) {
   const a = document.createElement("a");
   a.href = dataUrl;
@@ -203,10 +155,8 @@ export default function ScoreQueryPage() {
     return "유형별 성적데이터 조회 · 기타 학원 모의고사";
   }, [type]);
 
-  // =========================
-  // ✅ PDF/IMG 렌더
-  // =========================
-  const [exportLoadingId, setExportLoadingId] = useState(null); // row.id
+  // ✅ 리포트 렌더
+  const [exportLoadingId, setExportLoadingId] = useState(null);
   const [exportMode, setExportMode] = useState(null); // "pdf" | "png"
   const [reportModel, setReportModel] = useState(null);
   const reportRef = useRef(null);
@@ -273,7 +223,6 @@ export default function ScoreQueryPage() {
     XLSX.writeFile(wb, `성적데이터_${type}_${new Date().toISOString().slice(0, 10)}.xlsx`);
   }
 
-  // ✅ A4 한 장 고정
   const REPORT_W = 860;
   const REPORT_H = 1216;
 
@@ -291,17 +240,13 @@ export default function ScoreQueryPage() {
     setExportLoadingId(row.id);
     setExportMode(mode);
     try {
-      // =========================
-      // ✅ (핵심 수정) 통계 집계: 날짜(exam_date) 제외, 회차(title) 기준
-      //  - 날짜가 학생마다 달라도 동일 회차면 모두 응시자로 포함
-      // =========================
+      // ✅ 통계: 회차(title) 기준 + (가능하면 연도 제한)
       let qExam = supabase
         .from("student_scores_enriched")
         .select("id, student_id, score, exam_date, title")
         .eq("type", "academy_mock")
         .eq("title", row.title);
 
-      // ✅ 동일 제목을 해마다 쓸 가능성 대비: row.exam_date가 있으면 해당 연도 범위로 제한(권장)
       const y = String(row.exam_date || "").slice(0, 4);
       if (y) qExam = qExam.gte("exam_date", `${y}-01-01`).lte("exam_date", `${y}-12-31`);
 
@@ -311,9 +256,6 @@ export default function ScoreQueryPage() {
       const stats = calcStats((examAll || []).map((x) => x.score));
       const myScore = Number(row.score);
       const deltaFromAvg = Number.isFinite(myScore) && Number.isFinite(stats.avg) ? myScore - stats.avg : null;
-
-      const pos = positionBand(myScore, stats.sorted);
-      const comment = buildComment({ band: pos.band, deltaFromAvg });
 
       // 학생 히스토리(회차 순)
       const { data: hist, error: histErr } = await supabase
@@ -328,7 +270,6 @@ export default function ScoreQueryPage() {
         ...h,
         roundNo: parseRoundNo(h.title),
         scoreNum: Number(h.score),
-        gradeAbs: scoreToAbsoluteGrade(h.score),
         gradeLabel: gradeLabelFromScore(h.score),
       }));
 
@@ -347,11 +288,10 @@ export default function ScoreQueryPage() {
 
       const deltasRecent = historyRecent.map((h) => {
         const globalIdx = history.indexOf(h);
-        if (globalIdx <= 0) return { scoreDelta: null, gradeDelta: null };
+        if (globalIdx <= 0) return { scoreDelta: null };
         const prev = history[globalIdx - 1];
         const sd = Number.isFinite(h.scoreNum) && Number.isFinite(prev.scoreNum) ? h.scoreNum - prev.scoreNum : null;
-        const gd = Number.isFinite(h.gradeAbs) && Number.isFinite(prev.gradeAbs) ? h.gradeAbs - prev.gradeAbs : null;
-        return { scoreDelta: sd, gradeDelta: gd };
+        return { scoreDelta: sd };
       });
 
       const student = {
@@ -362,26 +302,37 @@ export default function ScoreQueryPage() {
       };
 
       const exam = {
-        exam_date: row.exam_date || (examAll?.map((x) => x.exam_date).sort().slice(-1)[0] || ""), // 대표로 최신 날짜
+        exam_date: row.exam_date || (examAll?.map((x) => x.exam_date).sort().slice(-1)[0] || ""),
         title: row.title,
         roundNo: parseRoundNo(row.title),
         score: row.score,
         gradeLabel: gradeLabelFromScore(row.score),
       };
 
-      const pointsAll = history.map((h) => {
+      // ✅ 그래프: 50회차 이상 대비
+      // - 선(path)은 전체 데이터를 사용
+      // - 점(dot)은 너무 많으면 간격으로만 찍기
+      // - x라벨도 간격으로만 표시
+      const pointsAll = history.map((h, idx) => {
         const rno = parseRoundNo(h.title);
-        return { xLabel: Number.isFinite(rno) ? `${rno}회` : (h.title || "").slice(0, 5), y: Number(h.score) };
+        return {
+          idx,
+          xLabel: Number.isFinite(rno) ? `${rno}회` : (h.title || "").slice(0, 6),
+          y: Number(h.score),
+        };
       });
-      const chartPoints = samplePoints(pointsAll, 18);
 
       setReportModel({
         academyName: "산본 블라썸에듀",
         student,
         exam,
         stats,
-        my: { score: myScore, gradeLabel: gradeLabelFromScore(myScore), deltaFromAvg, band: pos.band, comment },
-        chartPoints,
+        my: {
+          score: myScore,
+          gradeLabel: gradeLabelFromScore(myScore),
+          deltaFromAvg,
+        },
+        chartPointsAll: pointsAll,
         table: { historyRecent, deltasRecent },
       });
 
@@ -405,14 +356,12 @@ export default function ScoreQueryPage() {
         return;
       }
 
-      // PDF
       const imgData = canvas.toDataURL("image/png");
       const pdf = new jsPDF("p", "mm", "a4");
       const pageW = 210;
       const pageH = 297;
       const imgW = pageW;
       const imgH = (canvas.height * imgW) / canvas.width;
-
       const yPos = (pageH - imgH) / 2;
       pdf.addImage(imgData, "PNG", 0, yPos, imgW, imgH);
       pdf.save(`${baseName}.pdf`);
@@ -426,32 +375,50 @@ export default function ScoreQueryPage() {
   }
 
   // =========================
-  // ✅ 리포트 내부 그래프 (SVG)
+  // ✅ 리포트 그래프 (50회차 대비)
   // =========================
-  function LineChart({ points, width = 800, height = 220, padding = 26 }) {
-    const ys = points.map((p) => p.y).filter((v) => Number.isFinite(v));
-    const minY = ys.length ? Math.min(...ys, 0) : 0;
-    const maxY = ys.length ? Math.max(...ys, 100) : 100;
+  function LineChartMany({ points, width = 800, height = 230, padding = 26 }) {
+    const pts = (points || []).filter((p) => Number.isFinite(p.y));
+    const n = pts.length;
+
+    // y축은 0~100 고정이 제일 보기 좋음
+    const minY = 0;
+    const maxY = 100;
 
     const w = width;
     const h = height;
     const innerW = w - padding * 2;
     const innerH = h - padding * 2;
 
-    const xStep = points.length <= 1 ? innerW : innerW / (points.length - 1);
+    const xStep = n <= 1 ? innerW : innerW / (n - 1);
     const yScale = (v) => {
       const t = (v - minY) / (maxY - minY || 1);
       return padding + innerH - t * innerH;
     };
     const xScale = (idx) => padding + idx * xStep;
 
-    const d = points
+    const d = pts
       .map((p, i) => {
         const x = xScale(i);
         const y = yScale(p.y);
         return `${i === 0 ? "M" : "L"} ${x.toFixed(2)} ${y.toFixed(2)}`;
       })
       .join(" ");
+
+    // ✅ 점/라벨 간격 자동
+    // - 1~15개: 전부
+    // - 16~30개: 2개마다
+    // - 31~60개: 5개마다
+    // - 61개 이상: 10개마다
+    let step = 1;
+    if (n > 15) step = 2;
+    if (n > 30) step = 5;
+    if (n > 60) step = 10;
+
+    const showIdx = new Set();
+    for (let i = 0; i < n; i += step) showIdx.add(i);
+    showIdx.add(0);
+    if (n > 0) showIdx.add(n - 1);
 
     return (
       <svg width={w} height={h} style={{ display: "block", border: `1px solid ${COLORS.pdfLineSoft}`, borderRadius: 14, background: "#fff" }}>
@@ -466,8 +433,11 @@ export default function ScoreQueryPage() {
             </g>
           );
         })}
-        {points.length >= 2 ? <path d={d} fill="none" stroke={COLORS.blue} strokeWidth="2.8" /> : null}
-        {points.map((p, i) => {
+
+        {n >= 2 ? <path d={d} fill="none" stroke={COLORS.blue} strokeWidth="2.8" /> : null}
+
+        {pts.map((p, i) => {
+          if (!showIdx.has(i)) return null;
           const x = xScale(i);
           const y = yScale(p.y);
           return (
@@ -492,7 +462,7 @@ export default function ScoreQueryPage() {
             조건을 걸어 성적 데이터를 모아서 보고, 엑셀로 내보낼 수 있어요.
             {type === "academy_mock" ? (
               <div style={{ marginTop: 6, color: COLORS.sub }}>
-                · 우측 버튼으로 <b>PDF</b> 또는 <b>이미지(PNG)</b>로 다운로드할 수 있어요(카톡 전송용).
+                · 우측 다운로드 버튼으로 <b>PDF</b> 또는 <b>이미지(PNG)</b>로 저장할 수 있어요(카톡 전송용).
               </div>
             ) : null}
           </div>
@@ -715,22 +685,10 @@ export default function ScoreQueryPage() {
                     {type === "academy_mock" ? (
                       <Td>
                         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                          <button
-                            type="button"
-                            onClick={() => exportAcademyMockReport(r, "pdf")}
-                            style={{ ...miniBtn, opacity: busy ? 0.55 : 1 }}
-                            disabled={busy}
-                            title="PDF 다운로드"
-                          >
+                          <button type="button" onClick={() => exportAcademyMockReport(r, "pdf")} style={{ ...miniBtn, opacity: busy ? 0.55 : 1 }} disabled={busy}>
                             {busy && exportMode === "pdf" ? "PDF…" : "PDF"}
                           </button>
-                          <button
-                            type="button"
-                            onClick={() => exportAcademyMockReport(r, "png")}
-                            style={{ ...miniBtn, opacity: busy ? 0.55 : 1 }}
-                            disabled={busy}
-                            title="이미지(PNG) 다운로드"
-                          >
+                          <button type="button" onClick={() => exportAcademyMockReport(r, "png")} style={{ ...miniBtn, opacity: busy ? 0.55 : 1 }} disabled={busy}>
                             {busy && exportMode === "png" ? "IMG…" : "IMG"}
                           </button>
                         </div>
@@ -807,14 +765,12 @@ export default function ScoreQueryPage() {
 
             {/* 본문 */}
             <div style={{ padding: "16px 26px 0" }}>
-              {/* 요약 + 통계 */}
               <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr", gap: 14 }}>
                 <div style={pdfCard}>
                   <div style={pdfLabel}>이번 회차 요약</div>
                   <div style={{ marginTop: 10, display: "flex", alignItems: "baseline", gap: 12, flexWrap: "wrap" }}>
                     <div style={{ fontSize: 42, fontWeight: 1100, letterSpacing: "-0.6px" }}>{fmtScore(reportModel.my.score)}</div>
                     <div style={{ fontSize: 16, fontWeight: 1000, color: COLORS.blue }}>{reportModel.my.gradeLabel}</div>
-                    <span style={pill}>내 위치: {reportModel.my.band}</span>
                   </div>
 
                   <div style={{ marginTop: 10, color: COLORS.sub, fontSize: 12, lineHeight: 1.6 }}>
@@ -823,11 +779,6 @@ export default function ScoreQueryPage() {
                       <span style={{ fontWeight: 1000, color: (reportModel.my.deltaFromAvg || 0) >= 0 ? COLORS.blue : COLORS.red }}>
                         {reportModel.my.deltaFromAvg === null ? "-" : `${fmtDelta(reportModel.my.deltaFromAvg)}점`}
                       </span>
-                    </div>
-
-                    <div style={{ marginTop: 8, padding: "10px 12px", borderRadius: 14, background: COLORS.soft, border: `1px solid ${COLORS.pdfLineSoft}` }}>
-                      <div style={{ fontSize: 11, color: COLORS.sub, fontWeight: 900, marginBottom: 6 }}>코멘트</div>
-                      <div style={{ fontSize: 12.5, color: COLORS.text, fontWeight: 900, lineHeight: 1.5 }}>{reportModel.my.comment}</div>
                     </div>
                   </div>
                 </div>
@@ -842,25 +793,23 @@ export default function ScoreQueryPage() {
                     <StatBox label="중앙값" value={reportModel.stats.median === null ? "-" : `${fmtScore(reportModel.stats.median)}점`} />
                     <div />
                   </div>
-
                   <div style={{ marginTop: 10, color: COLORS.sub, fontSize: 10.5, lineHeight: 1.5 }}>
                     · 통계는 <b>회차(title)</b> 기준으로 집계됩니다(응시일이 달라도 같은 회차면 포함).
                   </div>
                 </div>
               </div>
 
-              {/* 추이 그래프 + 최근 기록 */}
               <div style={{ marginTop: 12, ...pdfCard }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", gap: 12 }}>
                   <div>
                     <div style={pdfLabel}>점수 추이</div>
-                    <div style={{ marginTop: 4, color: COLORS.sub, fontSize: 10.5 }}>· 회차 순서로 정렬 · 점이 많으면 일부만 표시</div>
+                    <div style={{ marginTop: 4, color: COLORS.sub, fontSize: 10.5 }}>· 회차 순서로 정렬 · 회차가 많으면 라벨/점은 간격으로 표시</div>
                   </div>
                   <div style={{ color: COLORS.sub, fontSize: 10.5 }}>등급 기준: 90~100(1) … 0~19(9)</div>
                 </div>
 
                 <div style={{ marginTop: 10 }}>
-                  <LineChart points={reportModel.chartPoints || []} />
+                  <LineChartMany points={reportModel.chartPointsAll || []} />
                 </div>
 
                 <div style={{ marginTop: 10 }}>
@@ -928,9 +877,7 @@ export default function ScoreQueryPage() {
   );
 }
 
-// =========================
 // UI 컴포넌트
-// =========================
 function TypeChip({ active, children, onClick }) {
   return (
     <button
@@ -1056,14 +1003,4 @@ const pdfTd = {
   borderBottom: `1px solid ${COLORS.pdfLineSoft}`,
   color: COLORS.text,
   fontSize: 11,
-};
-
-const pill = {
-  display: "inline-block",
-  padding: "4px 10px",
-  borderRadius: 999,
-  background: "rgba(31,42,68,0.06)",
-  color: COLORS.text,
-  fontWeight: 1000,
-  fontSize: 12,
 };
