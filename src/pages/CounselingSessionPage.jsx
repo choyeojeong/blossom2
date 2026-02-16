@@ -62,6 +62,14 @@ function pct(score, max) {
   return Math.max(0, Math.min(100, p));
 }
 
+// ✅ Promise 타임아웃 유틸
+function withTimeout(promise, ms, message = "시간 초과") {
+  return Promise.race([
+    promise,
+    new Promise((_, rej) => setTimeout(() => rej(new Error(message)), ms)),
+  ]);
+}
+
 /**
  * ✅ 레이더 차트(SVG)
  * - chartSize: 그래프 크기
@@ -251,7 +259,6 @@ export default function CounselingSessionPage() {
   }, [areas, scores]);
 
   async function loadAll() {
-    // session
     const { data: s, error: e1 } = await supabase
       .from("counsel_sessions")
       .select("*")
@@ -260,7 +267,6 @@ export default function CounselingSessionPage() {
     if (e1) return alert("상담 로드 실패: " + e1.message);
     setSession(s);
 
-    // type
     const { data: t, error: e2 } = await supabase
       .from("counsel_test_types")
       .select("*")
@@ -269,7 +275,6 @@ export default function CounselingSessionPage() {
     if (e2) return alert("종류 로드 실패: " + e2.message);
     setType(t);
 
-    // areas
     const { data: a, error: e3 } = await supabase
       .from("counsel_areas")
       .select("*")
@@ -279,7 +284,6 @@ export default function CounselingSessionPage() {
     if (e3) return alert("영역 로드 실패: " + e3.message);
     setAreas(a || []);
 
-    // scores
     const { data: sc, error: e4 } = await supabase
       .from("counsel_session_scores")
       .select("*")
@@ -295,7 +299,6 @@ export default function CounselingSessionPage() {
     }
     setScores(map);
 
-    // templates
     if ((a || []).length) {
       const { data: tmp, error: e5 } = await supabase
         .from("counsel_comment_templates")
@@ -318,7 +321,6 @@ export default function CounselingSessionPage() {
       setTemplatesByArea({});
     }
 
-    // checked
     const { data: cm, error: e6 } = await supabase
       .from("counsel_session_comment_map")
       .select("template_id")
@@ -379,7 +381,6 @@ export default function CounselingSessionPage() {
         .eq("id", sessionId);
       if (e1) throw e1;
 
-      // scores upsert
       const rows = areas.map((a) => ({
         session_id: sessionId,
         area_id: a.id,
@@ -393,7 +394,6 @@ export default function CounselingSessionPage() {
         if (e2) throw e2;
       }
 
-      // comments sync
       const { error: e3 } = await supabase
         .from("counsel_session_comment_map")
         .delete()
@@ -417,43 +417,63 @@ export default function CounselingSessionPage() {
     }
   }
 
-  // ✅ 캡처 전 이미지 로딩을 확실히 기다림 (public 로고 포함)
-  async function waitForImages(rootEl) {
-    const imgs = Array.from(rootEl.querySelectorAll("img"));
+  // ✅ 캡처 전 이미지 로딩을 "무조건 끝나게" 기다림(깨진 이미지 포함) + 타임아웃
+  async function waitForImages(rootEl, timeoutMs = 8000) {
+    const imgs = Array.from(rootEl?.querySelectorAll?.("img") || []);
     if (!imgs.length) return;
 
-    await Promise.all(
-      imgs.map((img) => {
-        try {
-          // 이미 로드됨
-          if (img.complete && img.naturalWidth > 0) return Promise.resolve();
-          return new Promise((resolve) => {
-            const done = () => resolve();
-            img.addEventListener("load", done, { once: true });
-            img.addEventListener("error", done, { once: true });
-          });
-        } catch {
-          return Promise.resolve();
-        }
-      })
+    const tasks = imgs.map(
+      (img) =>
+        new Promise((resolve) => {
+          // ✅ 핵심: complete면(깨진 이미지 포함) 더 기다리지 말고 바로 통과
+          if (img.complete) return resolve();
+
+          const done = () => resolve();
+          img.addEventListener("load", done, { once: true });
+          img.addEventListener("error", done, { once: true });
+
+          // 안전장치(개별 이미지)
+          setTimeout(done, 3000);
+        })
     );
+
+    // 전체 타임아웃
+    try {
+      await withTimeout(Promise.all(tasks), timeoutMs, "이미지 로딩 지연");
+    } catch {
+      // 타임아웃이더라도 진행(캡처가 멈추는 것보다 낫다)
+    }
   }
 
   // ===== PDF 생성 =====
   async function buildPdfBlob() {
     if (!reportRef.current) throw new Error("PDF 영역이 없습니다.");
 
-    // ✅ 이미지(로고) 로드 대기
-    await waitForImages(reportRef.current);
-    // ✅ 폰트/레이아웃 안정화 약간
-    await new Promise((r) => setTimeout(r, 200));
+    const el = reportRef.current;
 
-    const canvas = await html2canvas(reportRef.current, {
-      scale: 2,
-      useCORS: true,
-      backgroundColor: "#ffffff",
-      scrollY: -window.scrollY,
-    });
+    // ✅ 폰트 로딩 대기(있는 브라우저만)
+    if (document?.fonts?.ready) {
+      try {
+        await withTimeout(document.fonts.ready, 3000, "폰트 로딩 지연");
+      } catch {}
+    }
+
+    // ✅ 이미지 로딩 대기(깨진 이미지도 통과) + 레이아웃 안정화
+    await waitForImages(el, 8000);
+    await new Promise((r) => setTimeout(r, 120));
+
+    const canvas = await withTimeout(
+      html2canvas(el, {
+        scale: 1.6, // ✅ 2는 멈춤/메모리 이슈가 더 잦음
+        useCORS: true,
+        backgroundColor: "#ffffff",
+        scrollY: -window.scrollY,
+        windowWidth: el.scrollWidth,
+        windowHeight: el.scrollHeight,
+      }),
+      25000,
+      "PDF 캡처가 너무 오래 걸립니다"
+    );
 
     const imgData = canvas.toDataURL("image/png");
     const pdf = new jsPDF("p", "mm", "a4");
@@ -591,7 +611,12 @@ export default function CounselingSessionPage() {
     zIndex: 60,
   };
 
-  if (!session) return <div style={wrap}><div style={{ color: COLORS.sub }}>로딩중…</div></div>;
+  if (!session)
+    return (
+      <div style={wrap}>
+        <div style={{ color: COLORS.sub }}>로딩중…</div>
+      </div>
+    );
 
   return (
     <>
@@ -894,14 +919,17 @@ export default function CounselingSessionPage() {
               </div>
             </div>
 
-            {/* ✅ 하단 중앙 로고 (public/blossom-logo.png) */}
+            {/* ✅ 하단 중앙 로고 (public/blossom-logo.png)
+                - 로고가 깨지면 캡처가 멈출 수 있어서 onError 시 숨김 처리 */}
             <div style={{ marginTop: 16, paddingTop: 12, borderTop: `1px solid ${COLORS.lineSoft}` }}>
               <div style={{ display: "flex", justifyContent: "center" }}>
                 <img
                   src="/blossom-logo.png"
                   alt="블라썸에듀"
-                  crossOrigin="anonymous"
                   style={{ width: 72, height: 72, objectFit: "contain", opacity: 0.95 }}
+                  onError={(e) => {
+                    e.currentTarget.style.display = "none";
+                  }}
                 />
               </div>
             </div>
