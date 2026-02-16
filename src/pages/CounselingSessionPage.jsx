@@ -7,9 +7,6 @@ import html2canvas from "html2canvas";
 import jsPDF from "jspdf";
 import { supabase } from "../utils/supabaseClient";
 
-// ✅ 로고 (src/assets/blossom-logo.png)
-import logo from "../assets/blossom-logo.png";
-
 dayjs.locale("ko");
 
 const COLORS = {
@@ -44,8 +41,17 @@ function clampInt(v) {
 }
 
 function safeText(v) {
-  const s = (v || "").trim();
+  const s = (v || "").toString().trim();
   return s ? s : "-";
+}
+
+// ✅ "16:00:00" -> "16:00"
+function fmtTimeHM(v) {
+  const s = (v || "").toString().trim();
+  if (!s) return "-";
+  if (/^\d{2}:\d{2}:\d{2}$/.test(s)) return s.slice(0, 5);
+  if (/^\d{2}:\d{2}$/.test(s)) return s;
+  return s.length >= 5 ? s.slice(0, 5) : s;
 }
 
 function pct(score, max) {
@@ -57,69 +63,66 @@ function pct(score, max) {
 }
 
 /**
- * ✅ 레이더(방사형) 차트: SVG
- * - chartSize(그래프 크기)와 margin(라벨 여백)을 분리해서
- *   라벨이 밖으로 나가도 SVG 캔버스가 충분히 커서 "안 잘리게" 처리
+ * ✅ 레이더 차트(SVG)
+ * - chartSize: 그래프 크기
+ * - margin: 라벨 여백(캔버스)
+ * - shiftX: 그래프 중심을 오른쪽으로 이동(긴 라벨 잘림 방지)
  */
 function RadarChart({
   areas,
   scoresMap,
-  chartSize = 320, // ✅ 그래프 자체 크게
-  margin = 80, // ✅ 라벨/여백 크게(잘림 방지)
+  chartSize = 320,
+  margin = 80,
+  shiftX = 0,
+  showSummary = true,
 }) {
   const items = (areas || []).map((a) => {
     const row = scoresMap?.[a.id] || {};
     const sc = clampInt(row.score ?? 0);
     const mx = clampInt(row.max ?? a.max_score ?? 0);
-    return {
-      id: a.id,
-      name: a.name || "",
-      score: sc,
-      max: mx,
-      p: pct(sc, mx),
-    };
+    return { id: a.id, name: a.name || "", score: sc, max: mx, p: pct(sc, mx) };
   });
 
   const n = items.length;
   if (!n) return null;
 
   const svgSize = chartSize + margin * 2;
-  const cx = margin + chartSize / 2;
+  const cx = margin + chartSize / 2 + shiftX;
   const cy = margin + chartSize / 2;
 
   const pad = 16;
   const R = chartSize / 2 - pad;
 
-  // 12시 방향부터 시작
-  const angleAt = (i) => (-Math.PI / 2) + (2 * Math.PI * i) / n;
+  const angleAt = (i) => -Math.PI / 2 + (2 * Math.PI * i) / n;
 
   const pt = (r, i) => {
     const ang = angleAt(i);
     return { x: cx + r * Math.cos(ang), y: cy + r * Math.sin(ang) };
   };
 
-  const gridSteps = [0.25, 0.5, 0.75, 1.0]; // 조금 더 촘촘하게
+  const gridSteps = [0.25, 0.5, 0.75, 1.0];
   const gridPolys = gridSteps.map((k) => {
     const r = R * k;
-    const pts = items.map((_, i) => {
+    return items
+      .map((_, i) => {
+        const p = pt(r, i);
+        return `${p.x.toFixed(2)},${p.y.toFixed(2)}`;
+      })
+      .join(" ");
+  });
+
+  const dataPoly = items
+    .map((it, i) => {
+      const r = R * (it.p / 100);
       const p = pt(r, i);
       return `${p.x.toFixed(2)},${p.y.toFixed(2)}`;
-    });
-    return pts.join(" ");
-  });
+    })
+    .join(" ");
 
-  const dataPts = items.map((it, i) => {
-    const r = R * (it.p / 100);
-    const p = pt(r, i);
-    return `${p.x.toFixed(2)},${p.y.toFixed(2)}`;
-  });
-  const dataPoly = dataPts.join(" ");
-
-  // ✅ 라벨은 R 밖으로 조금만(그러나 svg margin이 커서 안 잘림)
-  const labelR = R + 26;
+  const labelR = R + 28;
 
   return (
-    <div style={{ display: "flex", gap: 16, flexWrap: "wrap", alignItems: "center" }}>
+    <div style={{ display: "flex", gap: 18, flexWrap: "wrap", alignItems: "center" }}>
       <svg
         width={svgSize}
         height={svgSize}
@@ -128,7 +131,7 @@ function RadarChart({
           background: "#ffffff",
           border: `1px solid ${COLORS.lineSoft}`,
           borderRadius: 14,
-          overflow: "visible", // ✅ 혹시라도 잘림 방지
+          overflow: "visible",
         }}
       >
         {/* 축 */}
@@ -158,7 +161,7 @@ function RadarChart({
           />
         ))}
 
-        {/* 데이터 영역 */}
+        {/* 데이터 */}
         <polygon points={dataPoly} fill={COLORS.blueSoft} stroke={COLORS.blue} strokeWidth="2" />
 
         {/* 점 */}
@@ -182,14 +185,13 @@ function RadarChart({
         {items.map((it, i) => {
           const p = pt(labelR, i);
           const anchor = p.x < cx - 6 ? "end" : p.x > cx + 6 ? "start" : "middle";
-          const dy = p.y < cy ? -6 : 14;
-
+          const dy = p.y < cy ? -6 : 16;
           return (
             <text
               key={`label-${it.id}`}
               x={p.x}
               y={p.y + dy}
-              fontSize="14" // ✅ 글씨 조금 키움
+              fontSize="14"
               fill={COLORS.sub}
               textAnchor={anchor}
             >
@@ -199,28 +201,24 @@ function RadarChart({
         })}
       </svg>
 
-      {/* 요약 */}
-      <div style={{ minWidth: 280 }}>
-        <div style={{ fontWeight: 900, marginBottom: 10, fontSize: 15 }}>영역별 달성률</div>
-        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          {items.map((it) => (
-            <div
-              key={`row-${it.id}`}
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                gap: 12,
-                fontSize: 14,
-              }}
-            >
-              <div style={{ fontWeight: 900 }}>{it.name}</div>
-              <div style={{ color: COLORS.sub }}>
-                {it.score}/{it.max} ({Math.round(it.p)}%)
+      {showSummary && (
+        <div style={{ minWidth: 280 }}>
+          <div style={{ fontWeight: 900, marginBottom: 10, fontSize: 15 }}>영역별 달성률</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {items.map((it) => (
+              <div
+                key={`row-${it.id}`}
+                style={{ display: "flex", justifyContent: "space-between", gap: 12, fontSize: 14 }}
+              >
+                <div style={{ fontWeight: 900 }}>{it.name}</div>
+                <div style={{ color: COLORS.sub }}>
+                  {it.score}/{it.max} ({Math.round(it.p)}%)
+                </div>
               </div>
-            </div>
-          ))}
+            ))}
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }
@@ -251,16 +249,6 @@ export default function CounselingSessionPage() {
     }
     return { score: s, max: m };
   }, [areas, scores]);
-
-  const selectedCommentsByArea = useMemo(() => {
-    const byArea = {};
-    for (const a of areas) byArea[a.id] = [];
-    for (const a of areas) {
-      const list = templatesByArea[a.id] || [];
-      for (const t of list) if (checkedTemplateIds.has(t.id)) byArea[a.id].push(t);
-    }
-    return byArea;
-  }, [areas, templatesByArea, checkedTemplateIds]);
 
   async function loadAll() {
     // session
@@ -299,8 +287,12 @@ export default function CounselingSessionPage() {
     if (e4) return alert("점수 로드 실패: " + e4.message);
 
     const map = {};
-    for (const row of sc || []) map[row.area_id] = { score: row.score, max: row.max_score_snapshot };
-    for (const ar of a || []) if (!map[ar.id]) map[ar.id] = { score: 0, max: ar.max_score };
+    for (const row of sc || []) {
+      map[row.area_id] = { score: row.score, max: row.max_score_snapshot };
+    }
+    for (const ar of a || []) {
+      if (!map[ar.id]) map[ar.id] = { score: 0, max: ar.max_score };
+    }
     setScores(map);
 
     // templates
@@ -351,14 +343,16 @@ export default function CounselingSessionPage() {
 
   function updateScore(areaId, v) {
     const n = clampInt(v);
-    setScores((prev) => ({ ...prev, [areaId]: { ...(prev[areaId] || {}), score: n } }));
+    setScores((prev) => ({
+      ...prev,
+      [areaId]: { ...(prev[areaId] || {}), score: n },
+    }));
   }
 
   async function saveAll({ silent = false } = {}) {
     if (!session) return false;
     setSaving(true);
     try {
-      // ✅ 총평 제거: overall_note 항상 null
       const { error: e1 } = await supabase
         .from("counsel_sessions")
         .update({
@@ -380,7 +374,7 @@ export default function CounselingSessionPage() {
           first_book_grammar: session.first_book_grammar,
           first_book_reading: session.first_book_reading,
 
-          overall_note: null,
+          overall_note: null, // ✅ 총평 미사용
         })
         .eq("id", sessionId);
       if (e1) throw e1;
@@ -423,12 +417,36 @@ export default function CounselingSessionPage() {
     }
   }
 
+  // ✅ 캡처 전 이미지 로딩을 확실히 기다림 (public 로고 포함)
+  async function waitForImages(rootEl) {
+    const imgs = Array.from(rootEl.querySelectorAll("img"));
+    if (!imgs.length) return;
+
+    await Promise.all(
+      imgs.map((img) => {
+        try {
+          // 이미 로드됨
+          if (img.complete && img.naturalWidth > 0) return Promise.resolve();
+          return new Promise((resolve) => {
+            const done = () => resolve();
+            img.addEventListener("load", done, { once: true });
+            img.addEventListener("error", done, { once: true });
+          });
+        } catch {
+          return Promise.resolve();
+        }
+      })
+    );
+  }
+
   // ===== PDF 생성 =====
   async function buildPdfBlob() {
     if (!reportRef.current) throw new Error("PDF 영역이 없습니다.");
 
-    // ✅ 로고/이미지 렌더 안정화: 살짝 기다렸다 캡쳐(특히 느린 환경에서)
-    await new Promise((r) => setTimeout(r, 60));
+    // ✅ 이미지(로고) 로드 대기
+    await waitForImages(reportRef.current);
+    // ✅ 폰트/레이아웃 안정화 약간
+    await new Promise((r) => setTimeout(r, 200));
 
     const canvas = await html2canvas(reportRef.current, {
       scale: 2,
@@ -518,6 +536,16 @@ export default function CounselingSessionPage() {
     }
   }
 
+  const selectedCommentsByArea = useMemo(() => {
+    const byArea = {};
+    for (const a of areas) byArea[a.id] = [];
+    for (const a of areas) {
+      const list = templatesByArea[a.id] || [];
+      for (const t of list) if (checkedTemplateIds.has(t.id)) byArea[a.id].push(t);
+    }
+    return byArea;
+  }, [areas, templatesByArea, checkedTemplateIds]);
+
   // ===== 스타일 =====
   const wrap = {
     minHeight: "100vh",
@@ -563,13 +591,7 @@ export default function CounselingSessionPage() {
     zIndex: 60,
   };
 
-  if (!session) {
-    return (
-      <div style={wrap}>
-        <div style={{ color: COLORS.sub }}>로딩중…</div>
-      </div>
-    );
-  }
+  if (!session) return <div style={wrap}><div style={{ color: COLORS.sub }}>로딩중…</div></div>;
 
   return (
     <>
@@ -584,44 +606,19 @@ export default function CounselingSessionPage() {
           </div>
         </div>
 
-        {/* 학생 정보 */}
+        {/* 입력: 학생/담당 */}
         <div style={{ marginTop: 14, borderTop: `1px solid ${COLORS.lineSoft}`, paddingTop: 14 }}>
           <div style={{ fontWeight: 900, fontSize: 14, marginBottom: 10 }}>학생 정보</div>
           <div style={row}>
-            <input
-              style={input}
-              value={session.student_name || ""}
-              onChange={(e) => setSession((p) => ({ ...p, student_name: e.target.value }))}
-              placeholder="이름"
-            />
-            <input
-              style={input}
-              value={session.student_school || ""}
-              onChange={(e) => setSession((p) => ({ ...p, student_school: e.target.value }))}
-              placeholder="학교"
-            />
-            <input
-              style={{ ...input, minWidth: 120 }}
-              value={session.student_grade || ""}
-              onChange={(e) => setSession((p) => ({ ...p, student_grade: e.target.value }))}
-              placeholder="학년"
-            />
-            <input
-              style={input}
-              value={session.teacher_name || ""}
-              onChange={(e) => setSession((p) => ({ ...p, teacher_name: e.target.value }))}
-              placeholder="담당 선생님"
-            />
-            <input
-              style={{ ...input, minWidth: 170 }}
-              type="date"
-              value={session.test_date || dayjs().format("YYYY-MM-DD")}
-              onChange={(e) => setSession((p) => ({ ...p, test_date: e.target.value }))}
-            />
+            <input style={input} value={session.student_name || ""} onChange={(e) => setSession((p) => ({ ...p, student_name: e.target.value }))} placeholder="이름" />
+            <input style={input} value={session.student_school || ""} onChange={(e) => setSession((p) => ({ ...p, student_school: e.target.value }))} placeholder="학교" />
+            <input style={{ ...input, minWidth: 120 }} value={session.student_grade || ""} onChange={(e) => setSession((p) => ({ ...p, student_grade: e.target.value }))} placeholder="학년" />
+            <input style={input} value={session.teacher_name || ""} onChange={(e) => setSession((p) => ({ ...p, teacher_name: e.target.value }))} placeholder="담당 선생님" />
+            <input style={{ ...input, minWidth: 170 }} type="date" value={session.test_date || dayjs().format("YYYY-MM-DD")} onChange={(e) => setSession((p) => ({ ...p, test_date: e.target.value }))} />
           </div>
         </div>
 
-        {/* 수업 정보 */}
+        {/* 입력: 수업정보 */}
         <div style={{ marginTop: 14, borderTop: `1px solid ${COLORS.lineSoft}`, paddingTop: 14 }}>
           <div style={{ fontWeight: 900, fontSize: 14, marginBottom: 10 }}>수업 정보 (PDF 상단에 표시)</div>
 
@@ -633,23 +630,21 @@ export default function CounselingSessionPage() {
               onChange={(e) => setSession((p) => ({ ...p, oto_weekday: Number(e.target.value) }))}
             >
               {WEEKDAYS.map((w) => (
-                <option key={w.v} value={w.v}>
-                  {w.label}
-                </option>
+                <option key={w.v} value={w.v}>{w.label}</option>
               ))}
             </select>
 
             <input
               style={{ ...input, minWidth: 180 }}
               type="time"
-              value={session.oto_arrival_time || ""}
+              value={fmtTimeHM(session.oto_arrival_time || "")}
               onChange={(e) => setSession((p) => ({ ...p, oto_arrival_time: e.target.value }))}
               placeholder="등원시간"
             />
             <input
               style={{ ...input, minWidth: 180 }}
               type="time"
-              value={session.oto_class_time || ""}
+              value={fmtTimeHM(session.oto_class_time || "")}
               onChange={(e) => setSession((p) => ({ ...p, oto_class_time: e.target.value }))}
               placeholder="수업시간"
             />
@@ -662,14 +657,10 @@ export default function CounselingSessionPage() {
             <select
               style={{ ...input, minWidth: 120 }}
               value={session.reading_weekday ?? 1}
-              onChange={(e) =>
-                setSession((p) => ({ ...p, reading_weekday: Number(e.target.value) }))
-              }
+              onChange={(e) => setSession((p) => ({ ...p, reading_weekday: Number(e.target.value) }))}
             >
               {WEEKDAYS.map((w) => (
-                <option key={w.v} value={w.v}>
-                  {w.label}
-                </option>
+                <option key={w.v} value={w.v}>{w.label}</option>
               ))}
             </select>
 
@@ -682,7 +673,7 @@ export default function CounselingSessionPage() {
             <input
               style={{ ...input, minWidth: 180 }}
               type="time"
-              value={session.reading_class_time || ""}
+              value={fmtTimeHM(session.reading_class_time || "")}
               onChange={(e) => setSession((p) => ({ ...p, reading_class_time: e.target.value }))}
               placeholder="독해 수업시간"
             />
@@ -692,25 +683,16 @@ export default function CounselingSessionPage() {
         {/* 영역 점수 */}
         <div style={{ marginTop: 14, borderTop: `1px solid ${COLORS.lineSoft}`, paddingTop: 14 }}>
           <div style={{ fontWeight: 900, fontSize: 14, marginBottom: 10 }}>
-            영역별 점수{" "}
-            <span style={{ color: COLORS.sub, fontSize: 12 }}>
-              (총 {total.score}/{total.max})
-            </span>
+            영역별 점수 <span style={{ color: COLORS.sub, fontSize: 12 }}>(총 {total.score}/{total.max})</span>
           </div>
 
           <div style={{ overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", borderTop: `1px solid ${COLORS.line}` }}>
               <thead>
                 <tr>
-                  <th style={{ textAlign: "left", padding: "10px 8px", fontSize: 12, color: COLORS.sub }}>
-                    영역
-                  </th>
-                  <th style={{ textAlign: "left", padding: "10px 8px", fontSize: 12, color: COLORS.sub }}>
-                    점수
-                  </th>
-                  <th style={{ textAlign: "left", padding: "10px 8px", fontSize: 12, color: COLORS.sub }}>
-                    총점
-                  </th>
+                  <th style={{ textAlign: "left", padding: "10px 8px", fontSize: 12, color: COLORS.sub }}>영역</th>
+                  <th style={{ textAlign: "left", padding: "10px 8px", fontSize: 12, color: COLORS.sub }}>점수</th>
+                  <th style={{ textAlign: "left", padding: "10px 8px", fontSize: 12, color: COLORS.sub }}>총점</th>
                 </tr>
               </thead>
               <tbody>
@@ -743,9 +725,9 @@ export default function CounselingSessionPage() {
             </table>
           </div>
 
-          {/* ✅ (입력 페이지) 레이더 그래프 */}
+          {/* 화면 레이더 */}
           <div style={{ marginTop: 12 }}>
-            <RadarChart areas={areas} scoresMap={scores} chartSize={320} margin={80} />
+            <RadarChart areas={areas} scoresMap={scores} chartSize={320} margin={80} shiftX={22} />
           </div>
         </div>
 
@@ -778,28 +760,13 @@ export default function CounselingSessionPage() {
         <div style={{ marginTop: 14, borderTop: `1px solid ${COLORS.lineSoft}`, paddingTop: 14 }}>
           <div style={{ fontWeight: 900, fontSize: 14, marginBottom: 10 }}>첫 교재 정보</div>
           <div style={row}>
-            <input
-              style={{ ...input, minWidth: 260 }}
-              value={session.first_book_vocab || ""}
-              onChange={(e) => setSession((p) => ({ ...p, first_book_vocab: e.target.value }))}
-              placeholder="단어책"
-            />
-            <input
-              style={{ ...input, minWidth: 260 }}
-              value={session.first_book_grammar || ""}
-              onChange={(e) => setSession((p) => ({ ...p, first_book_grammar: e.target.value }))}
-              placeholder="문법/구문책"
-            />
-            <input
-              style={{ ...input, minWidth: 260 }}
-              value={session.first_book_reading || ""}
-              onChange={(e) => setSession((p) => ({ ...p, first_book_reading: e.target.value }))}
-              placeholder="독해책"
-            />
+            <input style={{ ...input, minWidth: 260 }} value={session.first_book_vocab || ""} onChange={(e) => setSession((p) => ({ ...p, first_book_vocab: e.target.value }))} placeholder="단어책" />
+            <input style={{ ...input, minWidth: 260 }} value={session.first_book_grammar || ""} onChange={(e) => setSession((p) => ({ ...p, first_book_grammar: e.target.value }))} placeholder="문법/구문책" />
+            <input style={{ ...input, minWidth: 260 }} value={session.first_book_reading || ""} onChange={(e) => setSession((p) => ({ ...p, first_book_reading: e.target.value }))} placeholder="독해책" />
           </div>
         </div>
 
-        {/* ===== PDF 미리보기 영역 ===== */}
+        {/* ===== PDF 미리보기 ===== */}
         <div style={{ marginTop: 18, borderTop: `1px solid ${COLORS.lineSoft}`, paddingTop: 14 }}>
           <div style={{ fontWeight: 900, fontSize: 14, marginBottom: 10 }}>PDF 미리보기</div>
 
@@ -812,7 +779,7 @@ export default function CounselingSessionPage() {
               border: `1px solid ${COLORS.lineSoft}`,
             }}
           >
-            {/* 헤더 */}
+            {/* 상단 헤더 */}
             <div style={{ fontSize: 18, fontWeight: 900, marginBottom: 10 }}>
               산본 블라썸에듀 · 레벨테스트 상담결과
             </div>
@@ -834,15 +801,15 @@ export default function CounselingSessionPage() {
                 <div style={{ minWidth: 260 }}>
                   <div style={{ fontWeight: 900, color: COLORS.text, marginBottom: 2 }}>일대일</div>
                   <div>요일: {wLabel(session.oto_weekday)}</div>
-                  <div>등원시간: {safeText(session.oto_arrival_time)}</div>
-                  <div>수업시간: {safeText(session.oto_class_time)}</div>
+                  <div>등원시간: {fmtTimeHM(session.oto_arrival_time)}</div>
+                  <div>수업시간: {fmtTimeHM(session.oto_class_time)}</div>
                 </div>
 
                 <div style={{ minWidth: 260 }}>
                   <div style={{ fontWeight: 900, color: COLORS.text, marginBottom: 2 }}>독해</div>
                   <div>요일: {wLabel(session.reading_weekday)}</div>
                   <div>선생님: {safeText(session.reading_teacher_name)}</div>
-                  <div>수업시간: {safeText(session.reading_class_time)}</div>
+                  <div>수업시간: {fmtTimeHM(session.reading_class_time)}</div>
                 </div>
               </div>
             </div>
@@ -880,9 +847,14 @@ export default function CounselingSessionPage() {
                 </tbody>
               </table>
 
-              {/* ✅ PDF에서는 더 크게(그리고 margin도 크게) → 라벨 절대 안 잘림 */}
               <div style={{ marginTop: 14 }}>
-                <RadarChart areas={areas} scoresMap={scores} chartSize={380} margin={96} />
+                <RadarChart
+                  areas={areas}
+                  scoresMap={scores}
+                  chartSize={380}
+                  margin={96}
+                  shiftX={34}
+                />
               </div>
             </div>
 
@@ -922,22 +894,16 @@ export default function CounselingSessionPage() {
               </div>
             </div>
 
-            {/* ✅ PDF 하단 중앙 로고 */}
-            <div
-              style={{
-                marginTop: 18,
-                paddingTop: 12,
-                borderTop: `1px solid ${COLORS.lineSoft}`,
-                display: "flex",
-                justifyContent: "center",
-                alignItems: "center",
-              }}
-            >
-              <img
-                src={logo}
-                alt="산본 블라썸에듀 로고"
-                style={{ width: 80, height: 80, objectFit: "contain" }}
-              />
+            {/* ✅ 하단 중앙 로고 (public/blossom-logo.png) */}
+            <div style={{ marginTop: 16, paddingTop: 12, borderTop: `1px solid ${COLORS.lineSoft}` }}>
+              <div style={{ display: "flex", justifyContent: "center" }}>
+                <img
+                  src="/blossom-logo.png"
+                  alt="블라썸에듀"
+                  crossOrigin="anonymous"
+                  style={{ width: 72, height: 72, objectFit: "contain", opacity: 0.95 }}
+                />
+              </div>
             </div>
           </div>
         </div>
@@ -958,9 +924,7 @@ export default function CounselingSessionPage() {
             alignItems: "center",
           }}
         >
-          <button style={btn} onClick={() => navigate("/counseling")}>
-            목록
-          </button>
+          <button style={btn} onClick={() => navigate("/counseling")}>목록</button>
 
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
             <button style={btn} onClick={() => saveAll()} disabled={saving}>
