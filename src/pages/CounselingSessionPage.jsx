@@ -1,3 +1,4 @@
+// src/pages/CounselingSessionPage.jsx
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import dayjs from "dayjs";
@@ -59,6 +60,7 @@ export default function CounselingSessionPage() {
 
   const reportRef = useRef(null);
 
+  // ✅ 학생 득점 / 유형 총점(영역 max 합) 자동 계산
   const total = useMemo(() => {
     let s = 0;
     let m = 0;
@@ -124,10 +126,7 @@ export default function CounselingSessionPage() {
     }
 
     // checked
-    const { data: cm, error: e6 } = await supabase
-      .from("counsel_session_comment_map")
-      .select("template_id")
-      .eq("session_id", sessionId);
+    const { data: cm, error: e6 } = await supabase.from("counsel_session_comment_map").select("template_id").eq("session_id", sessionId);
     if (e6) return alert("선택 코멘트 로드 실패: " + e6.message);
     setCheckedTemplateIds(new Set((cm || []).map((x) => x.template_id)));
   }
@@ -282,9 +281,10 @@ export default function CounselingSessionPage() {
       const filename = `counsel_${dayjs(session?.test_date).format("YYYYMMDD")}_${safeName}_${sessionId}.pdf`;
       const path = `${dayjs(session?.test_date).format("YYYY-MM")}/${filename}`;
 
-      const { error: e1 } = await supabase.storage
-        .from("counseling_pdfs")
-        .upload(path, blob, { upsert: true, contentType: "application/pdf" });
+      const { error: e1 } = await supabase.storage.from("counseling_pdfs").upload(path, blob, {
+        upsert: true,
+        contentType: "application/pdf",
+      });
       if (e1) throw e1;
 
       const { error: e2 } = await supabase.from("counsel_sessions").update({ pdf_path: path }).eq("id", sessionId);
@@ -341,6 +341,19 @@ export default function CounselingSessionPage() {
     fontWeight: 900,
   };
 
+  // ✅ 총점 요약 박스(화면/PDF 공통 톤)
+  const totalBox = {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: 10,
+    flexWrap: "wrap",
+    padding: "10px 12px",
+    borderRadius: 14,
+    border: `1px solid ${COLORS.lineSoft}`,
+    background: "rgba(255,255,255,0.72)",
+  };
+
   if (!session) return <div style={wrap}><div style={{ color: COLORS.sub }}>로딩중…</div></div>;
 
   return (
@@ -389,20 +402,8 @@ export default function CounselingSessionPage() {
             ))}
           </select>
 
-          <input
-            style={{ ...input, minWidth: 180 }}
-            type="time"
-            value={session.oto_arrival_time || ""}
-            onChange={(e) => setSession((p) => ({ ...p, oto_arrival_time: e.target.value }))}
-            placeholder="등원시간"
-          />
-          <input
-            style={{ ...input, minWidth: 180 }}
-            type="time"
-            value={session.oto_class_time || ""}
-            onChange={(e) => setSession((p) => ({ ...p, oto_class_time: e.target.value }))}
-            placeholder="수업시간"
-          />
+          <input style={{ ...input, minWidth: 180 }} type="time" value={session.oto_arrival_time || ""} onChange={(e) => setSession((p) => ({ ...p, oto_arrival_time: e.target.value }))} />
+          <input style={{ ...input, minWidth: 180 }} type="time" value={session.oto_class_time || ""} onChange={(e) => setSession((p) => ({ ...p, oto_class_time: e.target.value }))} />
         </div>
 
         <div style={{ height: 10 }} />
@@ -419,27 +420,32 @@ export default function CounselingSessionPage() {
             ))}
           </select>
 
-          <input
-            style={{ ...input, minWidth: 220 }}
-            value={session.reading_teacher_name || ""}
-            onChange={(e) => setSession((p) => ({ ...p, reading_teacher_name: e.target.value }))}
-            placeholder="독해 선생님 성함"
-          />
-          <input
-            style={{ ...input, minWidth: 180 }}
-            type="time"
-            value={session.reading_class_time || ""}
-            onChange={(e) => setSession((p) => ({ ...p, reading_class_time: e.target.value }))}
-            placeholder="독해 수업시간"
-          />
+          <input style={{ ...input, minWidth: 220 }} value={session.reading_teacher_name || ""} onChange={(e) => setSession((p) => ({ ...p, reading_teacher_name: e.target.value }))} placeholder="독해 선생님 성함" />
+          <input style={{ ...input, minWidth: 180 }} type="time" value={session.reading_class_time || ""} onChange={(e) => setSession((p) => ({ ...p, reading_class_time: e.target.value }))} />
         </div>
       </div>
 
-      {/* 영역 점수 */}
+      {/* ✅ 영역 점수: 총점(유형/학생) 상단 강조 */}
       <div style={{ marginTop: 14, borderTop: `1px solid ${COLORS.lineSoft}`, paddingTop: 14 }}>
-        <div style={{ fontWeight: 900, fontSize: 14, marginBottom: 10 }}>
-          영역별 점수 <span style={{ color: COLORS.sub, fontSize: 12 }}>(총 {total.score}/{total.max})</span>
+        <div style={{ fontWeight: 900, fontSize: 14, marginBottom: 10 }}>레벨테스트 총점</div>
+
+        <div style={totalBox}>
+          <div style={{ fontWeight: 900 }}>
+            {type?.name || "레벨테스트"} 총점
+          </div>
+          <div style={{ display: "flex", gap: 10, alignItems: "baseline", flexWrap: "wrap" }}>
+            <div style={{ color: COLORS.sub, fontSize: 12, fontWeight: 900 }}>유형 총점</div>
+            <div style={{ fontWeight: 900, fontSize: 16 }}>{total.max}점</div>
+            <div style={{ width: 1, height: 14, background: COLORS.lineSoft }} />
+            <div style={{ color: COLORS.sub, fontSize: 12, fontWeight: 900 }}>학생 득점</div>
+            <div style={{ fontWeight: 900, fontSize: 16 }}>{total.score}점</div>
+            <div style={{ color: COLORS.sub, fontSize: 12 }}>({total.score}/{total.max})</div>
+          </div>
         </div>
+
+        <div style={{ height: 10 }} />
+
+        <div style={{ fontWeight: 900, fontSize: 14, marginBottom: 10 }}>영역별 점수</div>
 
         <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", borderTop: `1px solid ${COLORS.line}` }}>
@@ -453,9 +459,7 @@ export default function CounselingSessionPage() {
             <tbody>
               {areas.map((a) => (
                 <tr key={a.id}>
-                  <td style={{ padding: "10px 8px", borderBottom: `1px solid ${COLORS.lineSoft}`, fontWeight: 900 }}>
-                    {a.name}
-                  </td>
+                  <td style={{ padding: "10px 8px", borderBottom: `1px solid ${COLORS.lineSoft}`, fontWeight: 900 }}>{a.name}</td>
                   <td style={{ padding: "10px 8px", borderBottom: `1px solid ${COLORS.lineSoft}` }}>
                     <input
                       style={{ ...input, height: 36, minWidth: 120 }}
@@ -559,8 +563,25 @@ export default function CounselingSessionPage() {
             <div><span style={{ fontWeight: 900, color: COLORS.text }}>날짜</span>: {dayjs(session.test_date).format("YYYY-MM-DD")}</div>
           </div>
 
-          {/* 수업정보 */}
+          {/* ✅ 총점 요약(영역표보다 상단) */}
           <div style={{ borderTop: `1px solid ${COLORS.lineSoft}`, paddingTop: 10 }}>
+            <div style={{ ...totalBox, background: "rgba(47,111,237,0.08)" }}>
+              <div style={{ fontWeight: 900 }}>
+                총점 요약
+              </div>
+              <div style={{ display: "flex", gap: 10, alignItems: "baseline", flexWrap: "wrap" }}>
+                <div style={{ color: COLORS.sub, fontSize: 12, fontWeight: 900 }}>유형 총점</div>
+                <div style={{ fontWeight: 900, fontSize: 16 }}>{total.max}점</div>
+                <div style={{ width: 1, height: 14, background: COLORS.lineSoft }} />
+                <div style={{ color: COLORS.sub, fontSize: 12, fontWeight: 900 }}>학생 득점</div>
+                <div style={{ fontWeight: 900, fontSize: 16 }}>{total.score}점</div>
+                <div style={{ color: COLORS.sub, fontSize: 12 }}>({total.score}/{total.max})</div>
+              </div>
+            </div>
+          </div>
+
+          {/* 수업정보 */}
+          <div style={{ borderTop: `1px solid ${COLORS.lineSoft}`, paddingTop: 10, marginTop: 10 }}>
             <div style={{ fontWeight: 900, marginBottom: 6 }}>수업 정보</div>
 
             <div style={{ display: "flex", flexWrap: "wrap", gap: 12, color: COLORS.sub, lineHeight: 1.45 }}>
@@ -582,9 +603,7 @@ export default function CounselingSessionPage() {
 
           {/* 점수 */}
           <div style={{ borderTop: `1px solid ${COLORS.lineSoft}`, paddingTop: 10, marginTop: 10 }}>
-            <div style={{ fontWeight: 900, marginBottom: 6 }}>
-              영역별 점수 (총 {total.score}/{total.max})
-            </div>
+            <div style={{ fontWeight: 900, marginBottom: 6 }}>영역별 점수</div>
 
             <table style={{ width: "100%", borderCollapse: "collapse" }}>
               <thead>
