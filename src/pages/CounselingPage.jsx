@@ -70,13 +70,15 @@ export default function CounselingPage() {
     const qq = (q || "").trim();
     if (!qq) return sessions;
     return sessions.filter((s) =>
-      `${s.student_name || ""} ${s.student_school || ""} ${s.student_grade || ""} ${s.test_type_name || ""}`
+      `${s.student_name || ""} ${s.student_school || ""} ${
+        s.student_grade || ""
+      } ${s.test_type_name || ""}`
         .toLowerCase()
         .includes(qq.toLowerCase())
     );
   }, [sessions, q]);
 
-  // ✅ 선택된 유형의 "유형 총점(=영역 총점 합)" 자동 계산
+  // ✅ (추가) 선택된 유형의 총점(영역 max 합)
   const typeTotalMax = useMemo(() => {
     return (areas || []).reduce((acc, a) => acc + safeNum(a?.max_score, 0), 0);
   }, [areas]);
@@ -92,10 +94,12 @@ export default function CounselingPage() {
     if (!selectedTypeId && data?.[0]?.id) setSelectedTypeId(data[0].id);
   }
 
+  // ✅ newCommentAreaId 유효성 보정 포함
   async function loadAreasAndTemplates(typeId) {
     if (!typeId) {
       setAreas([]);
       setTemplatesByArea({});
+      setNewCommentAreaId("");
       return;
     }
 
@@ -108,15 +112,20 @@ export default function CounselingPage() {
 
     if (e1) return alert("영역 로드 실패: " + e1.message);
 
-    setAreas(a || []);
-    if (!newCommentAreaId && a?.[0]?.id) setNewCommentAreaId(a[0].id);
+    const list = a || [];
+    setAreas(list);
 
-    if (!a?.length) {
+    // ✅ 핵심: 현재 선택된 newCommentAreaId가 이번 영역 목록에 없으면, 첫 영역으로 강제
+    const stillValid = list.some((x) => x.id === newCommentAreaId);
+    const nextAreaId = stillValid ? newCommentAreaId : (list?.[0]?.id || "");
+    setNewCommentAreaId(nextAreaId);
+
+    if (!list.length) {
       setTemplatesByArea({});
       return;
     }
 
-    const areaIds = a.map((x) => x.id);
+    const areaIds = list.map((x) => x.id);
     const { data: t, error: e2 } = await supabase
       .from("counsel_comment_templates")
       .select("*")
@@ -208,7 +217,9 @@ export default function CounselingPage() {
 
   async function deleteType(typeId) {
     if (
-      !confirm("이 레벨테스트 종류를 삭제할까요?\n(해당 종류의 영역/코멘트 템플릿도 함께 삭제됩니다)")
+      !confirm(
+        "이 레벨테스트 종류를 삭제할까요?\n(해당 종류의 영역/코멘트 템플릿도 함께 삭제됩니다)"
+      )
     )
       return;
     const { error } = await supabase.from("counsel_test_types").delete().eq("id", typeId);
@@ -247,7 +258,12 @@ export default function CounselingPage() {
   }
 
   async function deleteArea(areaId, name) {
-    if (!confirm(`영역 "${name}" 을 삭제할까요?\n(해당 영역의 코멘트 템플릿도 함께 삭제됩니다)`)) return;
+    if (
+      !confirm(
+        `영역 "${name}" 을 삭제할까요?\n(해당 영역의 코멘트 템플릿도 함께 삭제됩니다)`
+      )
+    )
+      return;
     const { error } = await supabase.from("counsel_areas").delete().eq("id", areaId);
     if (error) return alert("영역 삭제 실패: " + error.message);
     await loadAreasAndTemplates(selectedTypeId);
@@ -262,10 +278,16 @@ export default function CounselingPage() {
     const a1 = areas[idx];
     const a2 = areas[swapIdx];
 
-    const { error: e1 } = await supabase.from("counsel_areas").update({ order_index: a2.order_index }).eq("id", a1.id);
+    const { error: e1 } = await supabase
+      .from("counsel_areas")
+      .update({ order_index: a2.order_index })
+      .eq("id", a1.id);
     if (e1) return alert("순서 변경 실패: " + e1.message);
 
-    const { error: e2 } = await supabase.from("counsel_areas").update({ order_index: a1.order_index }).eq("id", a2.id);
+    const { error: e2 } = await supabase
+      .from("counsel_areas")
+      .update({ order_index: a1.order_index })
+      .eq("id", a2.id);
     if (e2) return alert("순서 변경 실패: " + e2.message);
 
     await loadAreasAndTemplates(selectedTypeId);
@@ -273,7 +295,9 @@ export default function CounselingPage() {
 
   // ===== 템플릿: 코멘트 =====
   async function addCommentTemplate() {
+    // ✅ 이게 빈 값이면 무조건 추가가 안 됨 → 위에서 유효성 보정함
     if (!newCommentAreaId) return alert("코멘트 템플릿을 추가할 영역을 선택해주세요.");
+
     const content = (newCommentText || "").trim();
     if (!content) return alert("코멘트 내용을 입력해주세요.");
 
@@ -296,7 +320,10 @@ export default function CounselingPage() {
     if (!next) return;
     const content = next.trim();
     if (!content) return;
-    const { error } = await supabase.from("counsel_comment_templates").update({ content }).eq("id", tid);
+    const { error } = await supabase
+      .from("counsel_comment_templates")
+      .update({ content })
+      .eq("id", tid);
     if (error) return alert("코멘트 수정 실패: " + error.message);
     await loadAreasAndTemplates(selectedTypeId);
   }
@@ -318,10 +345,16 @@ export default function CounselingPage() {
     const t1 = list[idx];
     const t2 = list[swapIdx];
 
-    const { error: e1 } = await supabase.from("counsel_comment_templates").update({ order_index: t2.order_index }).eq("id", t1.id);
+    const { error: e1 } = await supabase
+      .from("counsel_comment_templates")
+      .update({ order_index: t2.order_index })
+      .eq("id", t1.id);
     if (e1) return alert("순서 변경 실패: " + e1.message);
 
-    const { error: e2 } = await supabase.from("counsel_comment_templates").update({ order_index: t1.order_index }).eq("id", t2.id);
+    const { error: e2 } = await supabase
+      .from("counsel_comment_templates")
+      .update({ order_index: t1.order_index })
+      .eq("id", t2.id);
     if (e2) return alert("순서 변경 실패: " + e2.message);
 
     await loadAreasAndTemplates(selectedTypeId);
@@ -345,8 +378,10 @@ export default function CounselingPage() {
     if (!(s.teacher_name || "").trim()) return alert("담당 선생님 성함을 입력해주세요.");
 
     // 요일: 월~토만
-    if (![1, 2, 3, 4, 5, 6].includes(Number(s.oto_weekday))) return alert("일대일 요일은 월~토만 선택해주세요.");
-    if (![1, 2, 3, 4, 5, 6].includes(Number(s.reading_weekday))) return alert("독해 요일은 월~토만 선택해주세요.");
+    if (![1, 2, 3, 4, 5, 6].includes(Number(s.oto_weekday)))
+      return alert("일대일 요일은 월~토만 선택해주세요.");
+    if (![1, 2, 3, 4, 5, 6].includes(Number(s.reading_weekday)))
+      return alert("독해 요일은 월~토만 선택해주세요.");
 
     const payload = {
       student_name: (s.student_name || "").trim(),
@@ -391,7 +426,8 @@ export default function CounselingPage() {
   // ===== 스타일 =====
   const wrap = {
     minHeight: "100vh",
-    padding: "calc(env(safe-area-inset-top) + 16px) 16px calc(env(safe-area-inset-bottom) + 18px)",
+    padding:
+      "calc(env(safe-area-inset-top) + 16px) 16px calc(env(safe-area-inset-bottom) + 18px)",
     background: `linear-gradient(${COLORS.bgTop}, ${COLORS.bgBottom})`,
     color: COLORS.text,
   };
@@ -405,7 +441,12 @@ export default function CounselingPage() {
     fontSize: 14,
     fontWeight: 900,
   };
-  const row = { display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" };
+  const row = {
+    display: "flex",
+    gap: 10,
+    flexWrap: "wrap",
+    alignItems: "center",
+  };
   const input = {
     height: 40,
     padding: "0 12px",
@@ -481,15 +522,29 @@ export default function CounselingPage() {
   };
 
   const modalTitle = { fontSize: 15, fontWeight: 900, marginBottom: 10 };
-  const fieldLabel = { fontSize: 12, color: COLORS.sub, fontWeight: 900, marginBottom: 6 };
+  const fieldLabel = {
+    fontSize: 12,
+    color: COLORS.sub,
+    fontWeight: 900,
+    marginBottom: 6,
+  };
   const input2 = { ...input, minWidth: 160 };
 
   return (
     <div style={wrap}>
-      <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "flex-start" }}>
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          gap: 10,
+          alignItems: "flex-start",
+        }}
+      >
         <div>
           <h1 style={h1}>상담관리</h1>
-          <div style={sub}>템플릿(종류/영역/코멘트) 관리 + 신규 상담 기록 + PDF 저장/다시받기</div>
+          <div style={sub}>
+            템플릿(종류/영역/코멘트) 관리 + 신규 상담 기록 + PDF 저장/다시받기
+          </div>
         </div>
 
         <button style={btn} onClick={openNewSessionModal}>
@@ -501,7 +556,11 @@ export default function CounselingPage() {
       <div style={sectionTitle}>1) 레벨테스트 종류</div>
 
       <div style={row}>
-        <select style={select} value={selectedTypeId} onChange={(e) => setSelectedTypeId(e.target.value)}>
+        <select
+          style={select}
+          value={selectedTypeId}
+          onChange={(e) => setSelectedTypeId(e.target.value)}
+        >
           {types.map((t) => (
             <option key={t.id} value={t.id}>
               {t.name}
@@ -527,22 +586,32 @@ export default function CounselingPage() {
           </>
         )}
 
-        <input style={input} placeholder="종류 추가 (예: 예비중)" value={newTypeName} onChange={(e) => setNewTypeName(e.target.value)} />
+        <input
+          style={input}
+          placeholder="종류 추가 (예: 예비중)"
+          value={newTypeName}
+          onChange={(e) => setNewTypeName(e.target.value)}
+        />
         <button style={btn} onClick={addType}>
           종류 추가
         </button>
       </div>
 
-      {/* ✅ 유형 총점 상단 표시 */}
-      <div style={{ ...sectionTitle, marginTop: 14, display: "flex", gap: 10, alignItems: "baseline", flexWrap: "wrap" }}>
-        <div>2) 영역(총점) — 수정/삭제/순서</div>
-        <div style={{ color: COLORS.sub, fontSize: 12, fontWeight: 800 }}>
-          · 현재 유형 총점: <span style={{ fontWeight: 900, color: COLORS.text }}>{typeTotalMax}</span>점
-        </div>
+      {/* ✅ 여기만 “유형 총점” 표시 추가 */}
+      <div style={{ ...sectionTitle, marginTop: 14 }}>
+        2) 영역(총점) — 수정/삭제/순서{" "}
+        <span style={{ color: COLORS.sub, fontSize: 12, fontWeight: 800 }}>
+          (현재 유형 총점: <span style={{ color: COLORS.text, fontWeight: 900 }}>{typeTotalMax}</span>점)
+        </span>
       </div>
 
       <div style={row}>
-        <input style={input} placeholder="영역명 (예: 단어)" value={newAreaName} onChange={(e) => setNewAreaName(e.target.value)} />
+        <input
+          style={input}
+          placeholder="영역명 (예: 단어)"
+          value={newAreaName}
+          onChange={(e) => setNewAreaName(e.target.value)}
+        />
         <input
           style={{ ...input, minWidth: 140 }}
           type="number"
@@ -555,9 +624,17 @@ export default function CounselingPage() {
         </button>
       </div>
 
-      <div style={{ marginTop: 10, borderTop: `1px solid ${COLORS.lineSoft}`, paddingTop: 10 }}>
+      <div
+        style={{
+          marginTop: 10,
+          borderTop: `1px solid ${COLORS.lineSoft}`,
+          paddingTop: 10,
+        }}
+      >
         {!areas.length ? (
-          <div style={{ color: COLORS.sub, fontSize: 13 }}>영역이 아직 없습니다.</div>
+          <div style={{ color: COLORS.sub, fontSize: 13 }}>
+            영역이 아직 없습니다.
+          </div>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {areas.map((a, idx) => (
@@ -576,14 +653,31 @@ export default function CounselingPage() {
               >
                 <div style={{ fontWeight: 900 }}>
                   {a.name}{" "}
-                  <span style={{ color: COLORS.sub, fontWeight: 700 }}>({a.max_score}점)</span>
+                  <span style={{ color: COLORS.sub, fontWeight: 700 }}>
+                    ({a.max_score}점)
+                  </span>
                 </div>
 
-                <div style={{ display: "flex", gap: 6, marginLeft: "auto", flexWrap: "wrap" }}>
-                  <button style={smallBtn} disabled={idx === 0} onClick={() => moveArea(a.id, -1)}>
+                <div
+                  style={{
+                    display: "flex",
+                    gap: 6,
+                    marginLeft: "auto",
+                    flexWrap: "wrap",
+                  }}
+                >
+                  <button
+                    style={smallBtn}
+                    disabled={idx === 0}
+                    onClick={() => moveArea(a.id, -1)}
+                  >
                     ▲
                   </button>
-                  <button style={smallBtn} disabled={idx === areas.length - 1} onClick={() => moveArea(a.id, +1)}>
+                  <button
+                    style={smallBtn}
+                    disabled={idx === areas.length - 1}
+                    onClick={() => moveArea(a.id, +1)}
+                  >
                     ▼
                   </button>
                   <button
@@ -602,13 +696,17 @@ export default function CounselingPage() {
                       const mm = prompt("총점 수정", String(a.max_score ?? 0));
                       if (mm == null) return;
                       const n = safeNum(mm, NaN);
-                      if (!Number.isFinite(n) || n < 0) return alert("총점을 숫자로 입력해주세요.");
+                      if (!Number.isFinite(n) || n < 0)
+                        return alert("총점을 숫자로 입력해주세요.");
                       updateArea(a.id, { max_score: Math.floor(n) });
                     }}
                   >
                     총점수정
                   </button>
-                  <button style={smallBtn} onClick={() => deleteArea(a.id, a.name)}>
+                  <button
+                    style={smallBtn}
+                    onClick={() => deleteArea(a.id, a.name)}
+                  >
                     삭제
                   </button>
                 </div>
@@ -618,9 +716,15 @@ export default function CounselingPage() {
         )}
       </div>
 
-      <div style={{ ...sectionTitle, marginTop: 16 }}>3) 객관식 코멘트 — 수정/삭제/순서</div>
+      <div style={{ ...sectionTitle, marginTop: 16 }}>
+        3) 객관식 코멘트 — 수정/삭제/순서
+      </div>
       <div style={row}>
-        <select style={select} value={newCommentAreaId} onChange={(e) => setNewCommentAreaId(e.target.value)}>
+        <select
+          style={select}
+          value={newCommentAreaId}
+          onChange={(e) => setNewCommentAreaId(e.target.value)}
+        >
           {areas.map((a) => (
             <option key={a.id} value={a.id}>
               {a.name}
@@ -629,7 +733,12 @@ export default function CounselingPage() {
           {!areas.length && <option value="">(먼저 영역을 추가하세요)</option>}
         </select>
 
-        <input style={{ ...input, minWidth: 360 }} placeholder="코멘트 문장 추가" value={newCommentText} onChange={(e) => setNewCommentText(e.target.value)} />
+        <input
+          style={{ ...input, minWidth: 360 }}
+          placeholder="코멘트 문장 추가"
+          value={newCommentText}
+          onChange={(e) => setNewCommentText(e.target.value)}
+        />
         <button style={btn} onClick={addCommentTemplate}>
           코멘트 추가
         </button>
@@ -639,15 +748,34 @@ export default function CounselingPage() {
         {areas.map((a) => {
           const list = templatesByArea[a.id] || [];
           return (
-            <div key={a.id} style={{ marginTop: 10, paddingTop: 10, borderTop: `1px solid ${COLORS.lineSoft}` }}>
+            <div
+              key={a.id}
+              style={{
+                marginTop: 10,
+                paddingTop: 10,
+                borderTop: `1px solid ${COLORS.lineSoft}`,
+              }}
+            >
               <div style={{ fontWeight: 900, fontSize: 13 }}>
-                {a.name} <span style={{ color: COLORS.sub, fontWeight: 700 }}>({list.length}개)</span>
+                {a.name}{" "}
+                <span style={{ color: COLORS.sub, fontWeight: 700 }}>
+                  ({list.length}개)
+                </span>
               </div>
 
               {!list.length ? (
-                <div style={{ color: COLORS.sub, fontSize: 13, marginTop: 8 }}>코멘트 없음</div>
+                <div style={{ color: COLORS.sub, fontSize: 13, marginTop: 8 }}>
+                  코멘트 없음
+                </div>
               ) : (
-                <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 8 }}>
+                <div
+                  style={{
+                    marginTop: 8,
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 8,
+                  }}
+                >
                   {list.map((t, idx) => (
                     <div
                       key={t.id}
@@ -661,18 +789,34 @@ export default function CounselingPage() {
                         background: "rgba(255,255,255,0.65)",
                       }}
                     >
-                      <div style={{ fontSize: 13, lineHeight: 1.35, flex: 1 }}>{t.content}</div>
+                      <div style={{ fontSize: 13, lineHeight: 1.35, flex: 1 }}>
+                        {t.content}
+                      </div>
                       <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                        <button style={smallBtn} disabled={idx === 0} onClick={() => moveComment(a.id, t.id, -1)}>
+                        <button
+                          style={smallBtn}
+                          disabled={idx === 0}
+                          onClick={() => moveComment(a.id, t.id, -1)}
+                        >
                           ▲
                         </button>
-                        <button style={smallBtn} disabled={idx === list.length - 1} onClick={() => moveComment(a.id, t.id, +1)}>
+                        <button
+                          style={smallBtn}
+                          disabled={idx === list.length - 1}
+                          onClick={() => moveComment(a.id, t.id, +1)}
+                        >
                           ▼
                         </button>
-                        <button style={smallBtn} onClick={() => editCommentTemplate(t.id, t.content)}>
+                        <button
+                          style={smallBtn}
+                          onClick={() => editCommentTemplate(t.id, t.content)}
+                        >
                           수정
                         </button>
-                        <button style={smallBtn} onClick={() => deleteCommentTemplate(t.id)}>
+                        <button
+                          style={smallBtn}
+                          onClick={() => deleteCommentTemplate(t.id)}
+                        >
                           삭제
                         </button>
                       </div>
@@ -688,7 +832,12 @@ export default function CounselingPage() {
       {/* 상담 기록 */}
       <div style={sectionTitle}>2) 상담 기록</div>
       <div style={row}>
-        <input style={{ ...input, minWidth: 320 }} placeholder="검색: 학생/학교/학년/종류" value={q} onChange={(e) => setQ(e.target.value)} />
+        <input
+          style={{ ...input, minWidth: 320 }}
+          placeholder="검색: 학생/학교/학년/종류"
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+        />
         <button style={btn} onClick={loadSessions}>
           새로고침
         </button>
@@ -739,7 +888,10 @@ export default function CounselingPage() {
                 </td>
 
                 <td style={td}>
-                  <button style={{ ...btn, height: 34, padding: "0 10px" }} onClick={() => navigate(`/counseling/${s.id}`)}>
+                  <button
+                    style={{ ...btn, height: 34, padding: "0 10px" }}
+                    onClick={() => navigate(`/counseling/${s.id}`)}
+                  >
                     열기
                   </button>
                 </td>
@@ -760,7 +912,14 @@ export default function CounselingPage() {
       {openNew && (
         <div style={modalBg} onClick={() => setOpenNew(false)}>
           <div style={modal} onClick={(e) => e.stopPropagation()}>
-            <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                gap: 10,
+                alignItems: "center",
+              }}
+            >
               <div style={modalTitle}>새 상담 정보 입력</div>
               <button style={smallBtn} onClick={() => setOpenNew(false)}>
                 닫기
@@ -770,32 +929,81 @@ export default function CounselingPage() {
             <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
               <div style={{ flex: "1 1 240px" }}>
                 <div style={fieldLabel}>학생 이름 *</div>
-                <input style={{ ...input2, width: "100%" }} value={newSession.student_name} onChange={(e) => setNewSession((p) => ({ ...p, student_name: e.target.value }))} />
+                <input
+                  style={{ ...input2, width: "100%" }}
+                  value={newSession.student_name}
+                  onChange={(e) =>
+                    setNewSession((p) => ({ ...p, student_name: e.target.value }))
+                  }
+                />
               </div>
               <div style={{ flex: "1 1 240px" }}>
                 <div style={fieldLabel}>학교</div>
-                <input style={{ ...input2, width: "100%" }} value={newSession.student_school} onChange={(e) => setNewSession((p) => ({ ...p, student_school: e.target.value }))} />
+                <input
+                  style={{ ...input2, width: "100%" }}
+                  value={newSession.student_school}
+                  onChange={(e) =>
+                    setNewSession((p) => ({
+                      ...p,
+                      student_school: e.target.value,
+                    }))
+                  }
+                />
               </div>
               <div style={{ flex: "1 1 140px" }}>
                 <div style={fieldLabel}>학년</div>
-                <input style={{ ...input2, width: "100%" }} value={newSession.student_grade} onChange={(e) => setNewSession((p) => ({ ...p, student_grade: e.target.value }))} />
+                <input
+                  style={{ ...input2, width: "100%" }}
+                  value={newSession.student_grade}
+                  onChange={(e) =>
+                    setNewSession((p) => ({ ...p, student_grade: e.target.value }))
+                  }
+                />
               </div>
               <div style={{ flex: "1 1 220px" }}>
                 <div style={fieldLabel}>담당 선생님 *</div>
-                <input style={{ ...input2, width: "100%" }} value={newSession.teacher_name} onChange={(e) => setNewSession((p) => ({ ...p, teacher_name: e.target.value }))} />
+                <input
+                  style={{ ...input2, width: "100%" }}
+                  value={newSession.teacher_name}
+                  onChange={(e) =>
+                    setNewSession((p) => ({ ...p, teacher_name: e.target.value }))
+                  }
+                />
               </div>
               <div style={{ flex: "1 1 180px" }}>
                 <div style={fieldLabel}>테스트 날짜</div>
-                <input style={{ ...input2, width: "100%" }} type="date" value={newSession.test_date} onChange={(e) => setNewSession((p) => ({ ...p, test_date: e.target.value }))} />
+                <input
+                  style={{ ...input2, width: "100%" }}
+                  type="date"
+                  value={newSession.test_date}
+                  onChange={(e) =>
+                    setNewSession((p) => ({ ...p, test_date: e.target.value }))
+                  }
+                />
               </div>
             </div>
 
-            <div style={{ marginTop: 12, borderTop: `1px solid ${COLORS.lineSoft}`, paddingTop: 12 }}>
+            <div
+              style={{
+                marginTop: 12,
+                borderTop: `1px solid ${COLORS.lineSoft}`,
+                paddingTop: 12,
+              }}
+            >
               <div style={{ fontWeight: 900, marginBottom: 8 }}>일대일 수업 정보</div>
               <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
                 <div style={{ flex: "1 1 140px" }}>
                   <div style={fieldLabel}>요일</div>
-                  <select style={{ ...input2, width: "100%" }} value={newSession.oto_weekday} onChange={(e) => setNewSession((p) => ({ ...p, oto_weekday: Number(e.target.value) }))}>
+                  <select
+                    style={{ ...input2, width: "100%" }}
+                    value={newSession.oto_weekday}
+                    onChange={(e) =>
+                      setNewSession((p) => ({
+                        ...p,
+                        oto_weekday: Number(e.target.value),
+                      }))
+                    }
+                  >
                     <option value={1}>월</option>
                     <option value={2}>화</option>
                     <option value={3}>수</option>
@@ -806,21 +1014,56 @@ export default function CounselingPage() {
                 </div>
                 <div style={{ flex: "1 1 180px" }}>
                   <div style={fieldLabel}>등원시간 (HH:MM)</div>
-                  <input style={{ ...input2, width: "100%" }} type="time" value={newSession.oto_arrival_time} onChange={(e) => setNewSession((p) => ({ ...p, oto_arrival_time: e.target.value }))} />
+                  <input
+                    style={{ ...input2, width: "100%" }}
+                    type="time"
+                    value={newSession.oto_arrival_time}
+                    onChange={(e) =>
+                      setNewSession((p) => ({
+                        ...p,
+                        oto_arrival_time: e.target.value,
+                      }))
+                    }
+                  />
                 </div>
                 <div style={{ flex: "1 1 180px" }}>
                   <div style={fieldLabel}>수업시간 (HH:MM)</div>
-                  <input style={{ ...input2, width: "100%" }} type="time" value={newSession.oto_class_time} onChange={(e) => setNewSession((p) => ({ ...p, oto_class_time: e.target.value }))} />
+                  <input
+                    style={{ ...input2, width: "100%" }}
+                    type="time"
+                    value={newSession.oto_class_time}
+                    onChange={(e) =>
+                      setNewSession((p) => ({
+                        ...p,
+                        oto_class_time: e.target.value,
+                      }))
+                    }
+                  />
                 </div>
               </div>
             </div>
 
-            <div style={{ marginTop: 12, borderTop: `1px solid ${COLORS.lineSoft}`, paddingTop: 12 }}>
+            <div
+              style={{
+                marginTop: 12,
+                borderTop: `1px solid ${COLORS.lineSoft}`,
+                paddingTop: 12,
+              }}
+            >
               <div style={{ fontWeight: 900, marginBottom: 8 }}>독해 수업 정보</div>
               <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
                 <div style={{ flex: "1 1 140px" }}>
                   <div style={fieldLabel}>요일</div>
-                  <select style={{ ...input2, width: "100%" }} value={newSession.reading_weekday} onChange={(e) => setNewSession((p) => ({ ...p, reading_weekday: Number(e.target.value) }))}>
+                  <select
+                    style={{ ...input2, width: "100%" }}
+                    value={newSession.reading_weekday}
+                    onChange={(e) =>
+                      setNewSession((p) => ({
+                        ...p,
+                        reading_weekday: Number(e.target.value),
+                      }))
+                    }
+                  >
                     <option value={1}>월</option>
                     <option value={2}>화</option>
                     <option value={3}>수</option>
@@ -831,16 +1074,43 @@ export default function CounselingPage() {
                 </div>
                 <div style={{ flex: "1 1 220px" }}>
                   <div style={fieldLabel}>독해 선생님 성함</div>
-                  <input style={{ ...input2, width: "100%" }} value={newSession.reading_teacher_name} onChange={(e) => setNewSession((p) => ({ ...p, reading_teacher_name: e.target.value }))} />
+                  <input
+                    style={{ ...input2, width: "100%" }}
+                    value={newSession.reading_teacher_name}
+                    onChange={(e) =>
+                      setNewSession((p) => ({
+                        ...p,
+                        reading_teacher_name: e.target.value,
+                      }))
+                    }
+                  />
                 </div>
                 <div style={{ flex: "1 1 180px" }}>
                   <div style={fieldLabel}>수업시간 (HH:MM)</div>
-                  <input style={{ ...input2, width: "100%" }} type="time" value={newSession.reading_class_time} onChange={(e) => setNewSession((p) => ({ ...p, reading_class_time: e.target.value }))} />
+                  <input
+                    style={{ ...input2, width: "100%" }}
+                    type="time"
+                    value={newSession.reading_class_time}
+                    onChange={(e) =>
+                      setNewSession((p) => ({
+                        ...p,
+                        reading_class_time: e.target.value,
+                      }))
+                    }
+                  />
                 </div>
               </div>
             </div>
 
-            <div style={{ marginTop: 12, display: "flex", justifyContent: "flex-end", gap: 8, flexWrap: "wrap" }}>
+            <div
+              style={{
+                marginTop: 12,
+                display: "flex",
+                justifyContent: "flex-end",
+                gap: 8,
+                flexWrap: "wrap",
+              }}
+            >
               <button style={btnDanger} onClick={() => setOpenNew(false)}>
                 취소
               </button>
