@@ -6,7 +6,8 @@ import html2canvas from "html2canvas";
 import jsPDF from "jspdf";
 import { supabase } from "../../utils/supabaseClient";
 
-import blossomLogo from "../../assets/blossom-logo.png";
+// ✅ public 폴더 사용: import 하지 말고 "/blossom-logo.png"로 직접 참조
+const BLOSSOM_LOGO_URL = "/blossom-logo.png";
 
 const COLORS = {
   text: "#1f2a44",
@@ -87,7 +88,10 @@ function parseRoundNo(title) {
 }
 
 function calcMedian(nums) {
-  const arr = (nums || []).filter((n) => Number.isFinite(n)).slice().sort((a, b) => a - b);
+  const arr = (nums || [])
+    .filter((n) => Number.isFinite(n))
+    .slice()
+    .sort((a, b) => a - b);
   if (arr.length === 0) return null;
   const mid = Math.floor(arr.length / 2);
   if (arr.length % 2 === 1) return arr[mid];
@@ -95,8 +99,11 @@ function calcMedian(nums) {
 }
 
 function calcStats(scores) {
-  const nums = (scores || []).map((x) => Number(x)).filter((n) => Number.isFinite(n));
-  if (nums.length === 0) return { count: 0, avg: null, min: null, max: null, median: null, sorted: [] };
+  const nums = (scores || [])
+    .map((x) => Number(x))
+    .filter((n) => Number.isFinite(n));
+  if (nums.length === 0)
+    return { count: 0, avg: null, min: null, max: null, median: null, sorted: [] };
   const sorted = nums.slice().sort((a, b) => a - b);
   const sum = nums.reduce((a, b) => a + b, 0);
   return {
@@ -167,12 +174,17 @@ export default function ScoreQueryPage() {
       let q = supabase.from("student_scores_enriched").select("*").eq("type", type);
 
       if (studentName.trim()) q = q.ilike("student_name", `%${studentName.trim()}%`);
-      if (studentSchool.trim()) q = q.ilike("student_school", `%${studentSchool.trim()}%`);
+      if (studentSchool.trim())
+        q = q.ilike("student_school", `%${studentSchool.trim()}%`);
       if (studentGrade) q = q.eq("student_grade", studentGrade);
       if (teacherName.trim()) q = q.eq("student_teacher_name", teacherName.trim());
 
       if (type === "school_exam") {
-        q = q.eq("year", Number(year)).eq("school_grade", schoolGrade).eq("semester", semester).eq("exam_kind", examKind);
+        q = q
+          .eq("year", Number(year))
+          .eq("school_grade", schoolGrade)
+          .eq("semester", semester)
+          .eq("exam_kind", examKind);
       } else if (type === "mock_exam") {
         q = q.eq("year", Number(mockYear)).eq("school_grade", mockGrade).eq("month", Number(mockMonth));
       } else {
@@ -212,8 +224,10 @@ export default function ScoreQueryPage() {
         "이전 대비 등급": trendText(r.grade_trend_symbol, r.grade_delta),
       };
 
-      if (type === "school_exam") return { ...base, 유형: "내신", 연도: r.year ?? "", 학년선택: r.school_grade ?? "", 학기: r.semester ?? "", 시험: r.exam_kind ?? "" };
-      if (type === "mock_exam") return { ...base, 유형: "모의고사", 연도: r.year ?? "", 학년선택: r.school_grade ?? "", 월: r.month ?? "" };
+      if (type === "school_exam")
+        return { ...base, 유형: "내신", 연도: r.year ?? "", 학년선택: r.school_grade ?? "", 학기: r.semester ?? "", 시험: r.exam_kind ?? "" };
+      if (type === "mock_exam")
+        return { ...base, 유형: "모의고사", 연도: r.year ?? "", 학년선택: r.school_grade ?? "", 월: r.month ?? "" };
       return { ...base, 유형: "기타 학원 모의고사", 날짜: r.exam_date ?? "", 종류: r.title ?? "" };
     });
 
@@ -255,7 +269,8 @@ export default function ScoreQueryPage() {
 
       const stats = calcStats((examAll || []).map((x) => x.score));
       const myScore = Number(row.score);
-      const deltaFromAvg = Number.isFinite(myScore) && Number.isFinite(stats.avg) ? myScore - stats.avg : null;
+      const deltaFromAvg =
+        Number.isFinite(myScore) && Number.isFinite(stats.avg) ? myScore - stats.avg : null;
 
       // 학생 히스토리(회차 순)
       const { data: hist, error: histErr } = await supabase
@@ -290,7 +305,10 @@ export default function ScoreQueryPage() {
         const globalIdx = history.indexOf(h);
         if (globalIdx <= 0) return { scoreDelta: null };
         const prev = history[globalIdx - 1];
-        const sd = Number.isFinite(h.scoreNum) && Number.isFinite(prev.scoreNum) ? h.scoreNum - prev.scoreNum : null;
+        const sd =
+          Number.isFinite(h.scoreNum) && Number.isFinite(prev.scoreNum)
+            ? h.scoreNum - prev.scoreNum
+            : null;
         return { scoreDelta: sd };
       });
 
@@ -302,7 +320,9 @@ export default function ScoreQueryPage() {
       };
 
       const exam = {
-        exam_date: row.exam_date || (examAll?.map((x) => x.exam_date).sort().slice(-1)[0] || ""),
+        exam_date:
+          row.exam_date ||
+          (examAll?.map((x) => x.exam_date).sort().slice(-1)[0] || ""),
         title: row.title,
         roundNo: parseRoundNo(row.title),
         score: row.score,
@@ -310,9 +330,6 @@ export default function ScoreQueryPage() {
       };
 
       // ✅ 그래프: 50회차 이상 대비
-      // - 선(path)은 전체 데이터를 사용
-      // - 점(dot)은 너무 많으면 간격으로만 찍기
-      // - x라벨도 간격으로만 표시
       const pointsAll = history.map((h, idx) => {
         const rno = parseRoundNo(h.title);
         return {
@@ -336,6 +353,7 @@ export default function ScoreQueryPage() {
         table: { historyRecent, deltasRecent },
       });
 
+      // 렌더 안정화
       await new Promise((r) => setTimeout(r, 80));
 
       const el = reportRef.current;
@@ -381,7 +399,6 @@ export default function ScoreQueryPage() {
     const pts = (points || []).filter((p) => Number.isFinite(p.y));
     const n = pts.length;
 
-    // y축은 0~100 고정이 제일 보기 좋음
     const minY = 0;
     const maxY = 100;
 
@@ -405,11 +422,6 @@ export default function ScoreQueryPage() {
       })
       .join(" ");
 
-    // ✅ 점/라벨 간격 자동
-    // - 1~15개: 전부
-    // - 16~30개: 2개마다
-    // - 31~60개: 5개마다
-    // - 61개 이상: 10개마다
     let step = 1;
     if (n > 15) step = 2;
     if (n > 30) step = 5;
@@ -421,12 +433,27 @@ export default function ScoreQueryPage() {
     if (n > 0) showIdx.add(n - 1);
 
     return (
-      <svg width={w} height={h} style={{ display: "block", border: `1px solid ${COLORS.pdfLineSoft}`, borderRadius: 14, background: "#fff" }}>
+      <svg
+        width={w}
+        height={h}
+        style={{
+          display: "block",
+          border: `1px solid ${COLORS.pdfLineSoft}`,
+          borderRadius: 14,
+          background: "#fff",
+        }}
+      >
         {[0, 25, 50, 75, 100].map((v) => {
           const y = yScale(v);
           return (
             <g key={v}>
-              <line x1={padding} y1={y} x2={w - padding} y2={y} stroke="rgba(31,42,68,0.07)" />
+              <line
+                x1={padding}
+                y1={y}
+                x2={w - padding}
+                y2={y}
+                stroke="rgba(31,42,68,0.07)"
+              />
               <text x={6} y={y + 4} fontSize="10" fill={COLORS.sub}>
                 {v}
               </text>
@@ -455,7 +482,15 @@ export default function ScoreQueryPage() {
 
   return (
     <div style={{ maxWidth: 1500, margin: "26px auto", padding: 20 }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 12,
+          flexWrap: "wrap",
+        }}
+      >
         <div>
           <div style={{ fontSize: 22, fontWeight: 900, color: COLORS.text }}>{headerTitle}</div>
           <div style={{ marginTop: 6, color: COLORS.sub }}>
@@ -472,7 +507,12 @@ export default function ScoreQueryPage() {
           <button type="button" onClick={() => nav(-1)} style={btnGhost}>
             뒤로
           </button>
-          <button type="button" onClick={exportExcel} style={{ ...btnPrimary, opacity: canExport ? 1 : 0.45 }} disabled={!canExport}>
+          <button
+            type="button"
+            onClick={exportExcel}
+            style={{ ...btnPrimary, opacity: canExport ? 1 : 0.45 }}
+            disabled={!canExport}
+          >
             엑셀 내보내기
           </button>
         </div>
@@ -492,7 +532,15 @@ export default function ScoreQueryPage() {
       </div>
 
       {/* 필터 */}
-      <div style={{ marginTop: 16, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: 14, background: "#fff" }}>
+      <div
+        style={{
+          marginTop: 16,
+          border: `1px solid ${COLORS.border}`,
+          borderRadius: 16,
+          padding: 14,
+          background: "#fff",
+        }}
+      >
         <div style={{ display: "grid", gridTemplateColumns: "repeat(6, minmax(0, 1fr))", gap: 10 }}>
           <Field label="학생이름(부분검색)">
             <input value={studentName} onChange={(e) => setStudentName(e.target.value)} style={input} placeholder="예: 김민준" />
@@ -685,10 +733,20 @@ export default function ScoreQueryPage() {
                     {type === "academy_mock" ? (
                       <Td>
                         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                          <button type="button" onClick={() => exportAcademyMockReport(r, "pdf")} style={{ ...miniBtn, opacity: busy ? 0.55 : 1 }} disabled={busy}>
+                          <button
+                            type="button"
+                            onClick={() => exportAcademyMockReport(r, "pdf")}
+                            style={{ ...miniBtn, opacity: busy ? 0.55 : 1 }}
+                            disabled={busy}
+                          >
                             {busy && exportMode === "pdf" ? "PDF…" : "PDF"}
                           </button>
-                          <button type="button" onClick={() => exportAcademyMockReport(r, "png")} style={{ ...miniBtn, opacity: busy ? 0.55 : 1 }} disabled={busy}>
+                          <button
+                            type="button"
+                            onClick={() => exportAcademyMockReport(r, "png")}
+                            style={{ ...miniBtn, opacity: busy ? 0.55 : 1 }}
+                            disabled={busy}
+                          >
                             {busy && exportMode === "png" ? "IMG…" : "IMG"}
                           </button>
                         </div>
@@ -727,7 +785,9 @@ export default function ScoreQueryPage() {
             >
               <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
                 <div>
-                  <div style={{ fontSize: 20, fontWeight: 1000, letterSpacing: "-0.2px" }}>{reportModel.academyName}</div>
+                  <div style={{ fontSize: 20, fontWeight: 1000, letterSpacing: "-0.2px" }}>
+                    {reportModel.academyName}
+                  </div>
                   <div style={{ marginTop: 6, color: COLORS.sub, fontSize: 12 }}>
                     학원 모의고사 성적 리포트
                     <span
@@ -769,14 +829,23 @@ export default function ScoreQueryPage() {
                 <div style={pdfCard}>
                   <div style={pdfLabel}>이번 회차 요약</div>
                   <div style={{ marginTop: 10, display: "flex", alignItems: "baseline", gap: 12, flexWrap: "wrap" }}>
-                    <div style={{ fontSize: 42, fontWeight: 1100, letterSpacing: "-0.6px" }}>{fmtScore(reportModel.my.score)}</div>
-                    <div style={{ fontSize: 16, fontWeight: 1000, color: COLORS.blue }}>{reportModel.my.gradeLabel}</div>
+                    <div style={{ fontSize: 42, fontWeight: 1100, letterSpacing: "-0.6px" }}>
+                      {fmtScore(reportModel.my.score)}
+                    </div>
+                    <div style={{ fontSize: 16, fontWeight: 1000, color: COLORS.blue }}>
+                      {reportModel.my.gradeLabel}
+                    </div>
                   </div>
 
                   <div style={{ marginTop: 10, color: COLORS.sub, fontSize: 12, lineHeight: 1.6 }}>
                     <div>
                       <b>평균 대비</b> :{" "}
-                      <span style={{ fontWeight: 1000, color: (reportModel.my.deltaFromAvg || 0) >= 0 ? COLORS.blue : COLORS.red }}>
+                      <span
+                        style={{
+                          fontWeight: 1000,
+                          color: (reportModel.my.deltaFromAvg || 0) >= 0 ? COLORS.blue : COLORS.red,
+                        }}
+                      >
                         {reportModel.my.deltaFromAvg === null ? "-" : `${fmtDelta(reportModel.my.deltaFromAvg)}점`}
                       </span>
                     </div>
@@ -787,10 +856,22 @@ export default function ScoreQueryPage() {
                   <div style={pdfLabel}>이번 회차 전체 통계</div>
                   <div style={{ marginTop: 10, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
                     <StatBox label="응시자" value={`${reportModel.stats.count}명`} />
-                    <StatBox label="평균" value={reportModel.stats.avg === null ? "-" : `${fmtScore(reportModel.stats.avg)}점`} />
-                    <StatBox label="최고" value={reportModel.stats.max === null ? "-" : `${fmtScore(reportModel.stats.max)}점`} />
-                    <StatBox label="최저" value={reportModel.stats.min === null ? "-" : `${fmtScore(reportModel.stats.min)}점`} />
-                    <StatBox label="중앙값" value={reportModel.stats.median === null ? "-" : `${fmtScore(reportModel.stats.median)}점`} />
+                    <StatBox
+                      label="평균"
+                      value={reportModel.stats.avg === null ? "-" : `${fmtScore(reportModel.stats.avg)}점`}
+                    />
+                    <StatBox
+                      label="최고"
+                      value={reportModel.stats.max === null ? "-" : `${fmtScore(reportModel.stats.max)}점`}
+                    />
+                    <StatBox
+                      label="최저"
+                      value={reportModel.stats.min === null ? "-" : `${fmtScore(reportModel.stats.min)}점`}
+                    />
+                    <StatBox
+                      label="중앙값"
+                      value={reportModel.stats.median === null ? "-" : `${fmtScore(reportModel.stats.median)}점`}
+                    />
                     <div />
                   </div>
                   <div style={{ marginTop: 10, color: COLORS.sub, fontSize: 10.5, lineHeight: 1.5 }}>
@@ -803,7 +884,9 @@ export default function ScoreQueryPage() {
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", gap: 12 }}>
                   <div>
                     <div style={pdfLabel}>점수 추이</div>
-                    <div style={{ marginTop: 4, color: COLORS.sub, fontSize: 10.5 }}>· 회차 순서로 정렬 · 회차가 많으면 라벨/점은 간격으로 표시</div>
+                    <div style={{ marginTop: 4, color: COLORS.sub, fontSize: 10.5 }}>
+                      · 회차 순서로 정렬 · 회차가 많으면 라벨/점은 간격으로 표시
+                    </div>
                   </div>
                   <div style={{ color: COLORS.sub, fontSize: 10.5 }}>등급 기준: 90~100(1) … 0~19(9)</div>
                 </div>
@@ -813,7 +896,9 @@ export default function ScoreQueryPage() {
                 </div>
 
                 <div style={{ marginTop: 10 }}>
-                  <div style={{ color: COLORS.sub, fontSize: 10.5, fontWeight: 900, marginBottom: 6 }}>최근 기록(최근 8회)</div>
+                  <div style={{ color: COLORS.sub, fontSize: 10.5, fontWeight: 900, marginBottom: 6 }}>
+                    최근 기록(최근 8회)
+                  </div>
                   <table style={{ width: "100%", borderCollapse: "collapse" }}>
                     <thead>
                       <tr>
@@ -838,7 +923,14 @@ export default function ScoreQueryPage() {
                             <td style={pdfTd}>{fmtScore(h.score)}</td>
                             <td style={pdfTd}>{h.gradeLabel}</td>
                             <td style={pdfTd}>
-                              <span style={{ fontWeight: 1000, color: sd > 0 ? COLORS.blue : sd < 0 ? COLORS.red : COLORS.sub }}>{sdText}</span>
+                              <span
+                                style={{
+                                  fontWeight: 1000,
+                                  color: sd > 0 ? COLORS.blue : sd < 0 ? COLORS.red : COLORS.sub,
+                                }}
+                              >
+                                {sdText}
+                              </span>
                             </td>
                           </tr>
                         );
@@ -849,7 +941,7 @@ export default function ScoreQueryPage() {
               </div>
             </div>
 
-            {/* 푸터(로고) */}
+            {/* ✅ 푸터(로고) */}
             <div
               style={{
                 position: "absolute",
@@ -868,7 +960,14 @@ export default function ScoreQueryPage() {
               <div style={{ color: COLORS.sub, fontSize: 10 }}>
                 © {new Date().getFullYear()} {reportModel.academyName} · 내부용 리포트
               </div>
-              <img src={blossomLogo} alt="logo" style={{ width: 52, height: 52, objectFit: "contain", opacity: 0.95 }} />
+
+              {/* ✅ public 이미지: crossOrigin 추가(캔버스 taint 방지 도움) */}
+              <img
+                src={BLOSSOM_LOGO_URL}
+                crossOrigin="anonymous"
+                alt="logo"
+                style={{ width: 52, height: 52, objectFit: "contain", opacity: 0.95 }}
+              />
             </div>
           </div>
         ) : null}
@@ -908,17 +1007,39 @@ function Field({ label, children }) {
 }
 function Th({ children }) {
   return (
-    <th style={{ textAlign: "left", padding: "10px 12px", borderBottom: `1px solid ${COLORS.border}`, color: COLORS.sub, fontSize: 13 }}>
+    <th
+      style={{
+        textAlign: "left",
+        padding: "10px 12px",
+        borderBottom: `1px solid ${COLORS.border}`,
+        color: COLORS.sub,
+        fontSize: 13,
+      }}
+    >
       {children}
     </th>
   );
 }
 function Td({ children }) {
-  return <td style={{ padding: "10px 12px", borderBottom: `1px solid ${COLORS.border}`, color: COLORS.text }}>{children}</td>;
+  return (
+    <td style={{ padding: "10px 12px", borderBottom: `1px solid ${COLORS.border}`, color: COLORS.text }}>
+      {children}
+    </td>
+  );
 }
 function InfoRow({ label, value }) {
   return (
-    <div style={{ display: "flex", gap: 10, alignItems: "center", padding: "10px 12px", borderRadius: 12, border: `1px solid ${COLORS.pdfLineSoft}`, background: "#fff" }}>
+    <div
+      style={{
+        display: "flex",
+        gap: 10,
+        alignItems: "center",
+        padding: "10px 12px",
+        borderRadius: 12,
+        border: `1px solid ${COLORS.pdfLineSoft}`,
+        background: "#fff",
+      }}
+    >
       <div style={{ minWidth: 86, color: COLORS.sub, fontSize: 11, fontWeight: 900 }}>{label}</div>
       <div style={{ color: COLORS.text, fontSize: 12, fontWeight: 900 }}>{value || "-"}</div>
     </div>
