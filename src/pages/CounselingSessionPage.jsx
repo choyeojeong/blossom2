@@ -78,6 +78,7 @@ function withTimeout(promise, ms, message = "시간 초과") {
  * ✅ 추가:
  * - extraRight/extraLeft: SVG 자체 가로폭을 늘려 라벨이 캔버스 밖으로 안 나가게
  * - noWrap: PDF에서 차트+요약 줄바꿈 방지
+ * - labelFontSize: 라벨 폰트 크기(기본 14)
  */
 function RadarChart({
   areas,
@@ -86,13 +87,10 @@ function RadarChart({
   margin = 80,
   shiftX = 0,
   showSummary = true,
-
-  // ✅ 추가: 오른쪽/왼쪽 여백을 SVG 자체 폭에 반영
   extraRight = 140,
   extraLeft = 0,
-
-  // ✅ 추가: PDF에서 줄바꿈 막기
   noWrap = false,
+  labelFontSize = 14,
 }) {
   const items = (areas || []).map((a) => {
     const row = scoresMap?.[a.id] || {};
@@ -193,7 +191,12 @@ function RadarChart({
         ))}
 
         {/* 데이터 */}
-        <polygon points={dataPoly} fill={COLORS.blueSoft} stroke={COLORS.blue} strokeWidth="2" />
+        <polygon
+          points={dataPoly}
+          fill={COLORS.blueSoft}
+          stroke={COLORS.blue}
+          strokeWidth="2"
+        />
 
         {/* 점 */}
         {items.map((it, i) => {
@@ -222,7 +225,7 @@ function RadarChart({
               key={`label-${it.id}`}
               x={p.x}
               y={p.y + dy}
-              fontSize="14"
+              fontSize={String(labelFontSize)}
               fill={COLORS.sub}
               textAnchor={anchor}
             >
@@ -495,7 +498,7 @@ export default function CounselingSessionPage() {
 
     const canvas = await withTimeout(
       html2canvas(el, {
-        scale: 1.6, // ✅ 2는 멈춤/메모리 이슈가 더 잦음
+        scale: 1.7, // ✅ A4 폭 고정으로 글자가 커져서 scale을 크게 안 해도 선명함
         useCORS: true,
         backgroundColor: "#ffffff",
         scrollY: -window.scrollY,
@@ -509,25 +512,33 @@ export default function CounselingSessionPage() {
     const imgData = canvas.toDataURL("image/png");
     const pdf = new jsPDF("p", "mm", "a4");
 
-    const pageWidth = 210;
-    const pageHeight = 297;
+    const pageW = 210;
+    const pageH = 297;
+
+    // ✅ “꽉참” 느낌 + 가독성 위해 안전 여백
+    const margin = 8; // mm
+    const contentW = pageW - margin * 2;
+    const contentH = pageH - margin * 2;
 
     const imgProps = pdf.getImageProperties(imgData);
-    const imgWidth = pageWidth;
-    const imgHeight = (imgProps.height * imgWidth) / imgProps.width;
+    const imgW = contentW;
+    const imgH = (imgProps.height * imgW) / imgProps.width;
 
-    if (imgHeight <= pageHeight) {
-      pdf.addImage(imgData, "PNG", 0, 0, imgWidth, imgHeight);
-    } else {
-      let remaining = imgHeight;
-      let position = 0;
-      while (remaining > 0) {
-        pdf.addImage(imgData, "PNG", 0, position, imgWidth, imgHeight);
-        remaining -= pageHeight;
-        if (remaining > 0) {
-          pdf.addPage();
-          position -= pageHeight;
-        }
+    // 한 페이지면 중앙 배치(여백 기준)
+    if (imgH <= contentH) {
+      pdf.addImage(imgData, "PNG", margin, margin, imgW, imgH);
+      return pdf.output("blob");
+    }
+
+    // 여러 페이지: 기존 방식 + 여백 적용
+    let remaining = imgH;
+    let position = margin; // y
+    while (remaining > 0) {
+      pdf.addImage(imgData, "PNG", margin, position, imgW, imgH);
+      remaining -= contentH;
+      if (remaining > 0) {
+        pdf.addPage();
+        position -= contentH; // 다음 페이지는 위로 당겨서 이어붙임
       }
     }
 
@@ -600,8 +611,7 @@ export default function CounselingSessionPage() {
   // ===== 스타일 =====
   const wrap = {
     minHeight: "100vh",
-    padding:
-      "calc(env(safe-area-inset-top) + 16px) 16px calc(env(safe-area-inset-bottom) + 96px)",
+    padding: "calc(env(safe-area-inset-top) + 16px) 16px calc(env(safe-area-inset-bottom) + 96px)",
     background: `linear-gradient(${COLORS.bgTop}, ${COLORS.bgBottom})`,
     color: COLORS.text,
   };
@@ -641,6 +651,33 @@ export default function CounselingSessionPage() {
     borderTop: `1px solid ${COLORS.lineSoft}`,
     zIndex: 60,
   };
+
+  // ✅ PDF 캡처용 A4 “픽셀” 폭 (대부분 브라우저에서 96dpi 기준)
+  // 캡처 대상이 이 폭으로 고정되면, jsPDF에 넣을 때 글자가 작아지는 문제가 확 줄어듭니다.
+  const A4_PX_W = 794; // ≈ 210mm @96dpi
+  const A4_PX_PAD = 46; // 페이지 여백 느낌 (PDF에서 8mm 마진과 함께 가독성/여백 밸런스)
+
+  // ✅ PDF 미리보기(캡처 대상) 내부 타이포 스케일(가독성)
+  const pdfBase = {
+    fontSize: 13.6,
+    lineHeight: 1.45,
+    color: COLORS.text,
+    letterSpacing: -0.1,
+  };
+
+  const pdfTitle = { fontSize: 22, fontWeight: 900, marginBottom: 10, letterSpacing: -0.4 };
+  const pdfMeta = { display: "flex", flexWrap: "wrap", gap: 12, color: COLORS.sub, fontSize: 13 };
+  const pdfSectionTitle = { fontWeight: 900, marginBottom: 8, fontSize: 15.5 };
+  const pdfSubTitle = { fontWeight: 900, color: COLORS.text, marginBottom: 2, fontSize: 13.8 };
+
+  const pdfCard = {
+    background: "#ffffff",
+    borderRadius: 16,
+    border: `1px solid ${COLORS.lineSoft}`,
+    boxShadow: "0 6px 18px rgba(31,42,68,0.06)",
+  };
+
+  const pdfDivider = { borderTop: `1px solid ${COLORS.lineSoft}`, paddingTop: 12, marginTop: 12 };
 
   if (!session)
     return (
@@ -922,184 +959,193 @@ export default function CounselingSessionPage() {
         <div style={{ marginTop: 18, borderTop: `1px solid ${COLORS.lineSoft}`, paddingTop: 14 }}>
           <div style={{ fontWeight: 900, fontSize: 14, marginBottom: 10 }}>PDF 미리보기</div>
 
-          <div
-            ref={reportRef}
-            style={{
-              background: "#ffffff",
-              borderRadius: 14,
-              padding: 18,
-              border: `1px solid ${COLORS.lineSoft}`,
-            }}
-          >
-            {/* 상단 헤더 */}
-            <div style={{ fontSize: 18, fontWeight: 900, marginBottom: 10 }}>
-              산본 블라썸에듀 · 레벨테스트 상담결과
-            </div>
-
+          {/* ✅ 화면에서는 반응형으로 보이게: 가로가 좁으면 스크롤 */}
+          <div style={{ overflowX: "auto", paddingBottom: 8 }}>
             <div
+              ref={reportRef}
               style={{
-                display: "flex",
-                flexWrap: "wrap",
-                gap: 14,
-                marginBottom: 10,
-                color: COLORS.sub,
+                ...pdfCard,
+                ...pdfBase,
+
+                // ✅ 캡처 대상: A4 폭 고정(글자 커짐 + 페이지 꽉 찬 느낌)
+                width: A4_PX_W,
+                margin: "0 auto",
+                padding: A4_PX_PAD,
+
+                // html2canvas/브라우저에서 요소가 잘리는 걸 방지
+                overflow: "visible",
               }}
             >
-              <div>
-                <span style={{ fontWeight: 900, color: COLORS.text }}>학생</span>:{" "}
-                {safeText(session.student_name)}
-              </div>
-              <div>
-                <span style={{ fontWeight: 900, color: COLORS.text }}>학교</span>:{" "}
-                {safeText(session.student_school)}
-              </div>
-              <div>
-                <span style={{ fontWeight: 900, color: COLORS.text }}>학년</span>:{" "}
-                {safeText(session.student_grade)}
-              </div>
-              <div>
-                <span style={{ fontWeight: 900, color: COLORS.text }}>담당</span>:{" "}
-                {safeText(session.teacher_name)}
-              </div>
-              <div>
-                <span style={{ fontWeight: 900, color: COLORS.text }}>테스트</span>:{" "}
-                {safeText(type?.name)}
-              </div>
-              <div>
-                <span style={{ fontWeight: 900, color: COLORS.text }}>날짜</span>:{" "}
-                {dayjs(session.test_date).format("YYYY-MM-DD")}
-              </div>
-            </div>
+              {/* 상단 헤더 */}
+              <div style={pdfTitle}>산본 블라썸에듀 · 레벨테스트 상담결과</div>
 
-            {/* 수업정보 */}
-            <div style={{ borderTop: `1px solid ${COLORS.lineSoft}`, paddingTop: 10 }}>
-              <div style={{ fontWeight: 900, marginBottom: 6 }}>수업 정보</div>
-
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 12, color: COLORS.sub, lineHeight: 1.45 }}>
-                <div style={{ minWidth: 260 }}>
-                  <div style={{ fontWeight: 900, color: COLORS.text, marginBottom: 2 }}>일대일</div>
-                  <div>요일: {wLabel(session.oto_weekday)}</div>
-                  <div>등원시간: {fmtTimeHM(session.oto_arrival_time)}</div>
-                  <div>수업시간: {fmtTimeHM(session.oto_class_time)}</div>
+              <div style={pdfMeta}>
+                <div>
+                  <span style={{ fontWeight: 900, color: COLORS.text }}>학생</span>:{" "}
+                  {safeText(session.student_name)}
                 </div>
-
-                <div style={{ minWidth: 260 }}>
-                  <div style={{ fontWeight: 900, color: COLORS.text, marginBottom: 2 }}>독해</div>
-                  <div>요일: {wLabel(session.reading_weekday)}</div>
-                  <div>선생님: {safeText(session.reading_teacher_name)}</div>
-                  <div>수업시간: {fmtTimeHM(session.reading_class_time)}</div>
+                <div>
+                  <span style={{ fontWeight: 900, color: COLORS.text }}>학교</span>:{" "}
+                  {safeText(session.student_school)}
+                </div>
+                <div>
+                  <span style={{ fontWeight: 900, color: COLORS.text }}>학년</span>:{" "}
+                  {safeText(session.student_grade)}
+                </div>
+                <div>
+                  <span style={{ fontWeight: 900, color: COLORS.text }}>담당</span>:{" "}
+                  {safeText(session.teacher_name)}
+                </div>
+                <div>
+                  <span style={{ fontWeight: 900, color: COLORS.text }}>테스트</span>:{" "}
+                  {safeText(type?.name)}
+                </div>
+                <div>
+                  <span style={{ fontWeight: 900, color: COLORS.text }}>날짜</span>:{" "}
+                  {dayjs(session.test_date).format("YYYY-MM-DD")}
                 </div>
               </div>
-            </div>
 
-            {/* 총점 */}
-            <div style={{ borderTop: `1px solid ${COLORS.lineSoft}`, paddingTop: 10, marginTop: 10 }}>
-              <div style={{ fontWeight: 900, marginBottom: 6, fontSize: 15 }}>
-                총점: {total.score} / {total.max}
-              </div>
-              <div style={{ color: COLORS.sub, fontSize: 12 }}>(아래 영역별 점수 합산)</div>
-            </div>
+              {/* 수업정보 */}
+              <div style={pdfDivider}>
+                <div style={pdfSectionTitle}>수업 정보</div>
 
-            {/* 점수 + 그래프 */}
-            <div style={{ borderTop: `1px solid ${COLORS.lineSoft}`, paddingTop: 10, marginTop: 10 }}>
-              <div style={{ fontWeight: 900, marginBottom: 8 }}>영역별 점수</div>
-
-              <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                <thead>
-                  <tr>
-                    <th style={{ textAlign: "left", fontSize: 12, color: COLORS.sub, padding: "8px 6px" }}>
-                      영역
-                    </th>
-                    <th style={{ textAlign: "left", fontSize: 12, color: COLORS.sub, padding: "8px 6px" }}>
-                      점수
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {areas.map((a) => (
-                    <tr key={a.id}>
-                      <td style={{ padding: "8px 6px", borderTop: `1px solid ${COLORS.lineSoft}`, fontWeight: 900 }}>
-                        {a.name}
-                      </td>
-                      <td style={{ padding: "8px 6px", borderTop: `1px solid ${COLORS.lineSoft}` }}>
-                        {clampInt(scores[a.id]?.score ?? 0)} / {clampInt(scores[a.id]?.max ?? a.max_score)}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-
-              <div style={{ marginTop: 14 }}>
-                <RadarChart
-                  areas={areas}
-                  scoresMap={scores}
-                  chartSize={380}
-                  margin={96}
-                  shiftX={0}
-                  extraRight={220}
-                  extraLeft={30}
-                  noWrap={true}
-                />
-              </div>
-            </div>
-
-            {/* 코멘트 */}
-            <div style={{ borderTop: `1px solid ${COLORS.lineSoft}`, paddingTop: 10, marginTop: 10 }}>
-              <div style={{ fontWeight: 900, marginBottom: 6 }}>선택 코멘트</div>
-
-              {areas.map((a) => {
-                const list = selectedCommentsByArea[a.id] || [];
-                if (!list.length) return null;
-                return (
-                  <div key={a.id} style={{ marginBottom: 10 }}>
-                    <div style={{ fontWeight: 900 }}>{a.name}</div>
-                    <ul style={{ marginTop: 6, marginBottom: 0, paddingLeft: 18 }}>
-                      {list.map((t) => (
-                        <li key={t.id} style={{ marginBottom: 4, lineHeight: 1.35 }}>
-                          {t.content}
-                        </li>
-                      ))}
-                    </ul>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 18, color: COLORS.sub }}>
+                  <div style={{ minWidth: 280 }}>
+                    <div style={pdfSubTitle}>일대일</div>
+                    <div>요일: {wLabel(session.oto_weekday)}</div>
+                    <div>등원시간: {fmtTimeHM(session.oto_arrival_time)}</div>
+                    <div>수업시간: {fmtTimeHM(session.oto_class_time)}</div>
                   </div>
-                );
-              })}
 
-              {!areas.some((a) => (selectedCommentsByArea[a.id] || []).length) && (
-                <div style={{ color: COLORS.sub }}>선택된 코멘트가 없습니다.</div>
-              )}
-            </div>
-
-            {/* 교재 */}
-            <div style={{ borderTop: `1px solid ${COLORS.lineSoft}`, paddingTop: 10, marginTop: 10 }}>
-              <div style={{ fontWeight: 900, marginBottom: 6 }}>첫 교재 안내</div>
-              <div style={{ lineHeight: 1.45, color: COLORS.sub }}>
-                <div>
-                  <span style={{ fontWeight: 900, color: COLORS.text }}>단어</span>:{" "}
-                  {safeText(session.first_book_vocab)}
-                </div>
-                <div>
-                  <span style={{ fontWeight: 900, color: COLORS.text }}>문법/구문</span>:{" "}
-                  {safeText(session.first_book_grammar)}
-                </div>
-                <div>
-                  <span style={{ fontWeight: 900, color: COLORS.text }}>독해</span>:{" "}
-                  {safeText(session.first_book_reading)}
+                  <div style={{ minWidth: 280 }}>
+                    <div style={pdfSubTitle}>독해</div>
+                    <div>요일: {wLabel(session.reading_weekday)}</div>
+                    <div>선생님: {safeText(session.reading_teacher_name)}</div>
+                    <div>수업시간: {fmtTimeHM(session.reading_class_time)}</div>
+                  </div>
                 </div>
               </div>
-            </div>
 
-            {/* ✅ 하단 중앙 로고 */}
-            <div style={{ marginTop: 16, paddingTop: 12, borderTop: `1px solid ${COLORS.lineSoft}` }}>
-              <div style={{ display: "flex", justifyContent: "center" }}>
-                <img
-                  src={LOGO_SRC}
-                  alt="블라썸에듀"
-                  crossOrigin="anonymous"
-                  style={{ width: 72, height: 72, objectFit: "contain", opacity: 0.95 }}
-                  onError={(e) => {
-                    e.currentTarget.style.display = "none";
-                  }}
-                />
+              {/* 총점 */}
+              <div style={pdfDivider}>
+                <div style={{ fontWeight: 900, fontSize: 16.5 }}>
+                  총점: {total.score} / {total.max}
+                </div>
+                <div style={{ color: COLORS.sub, fontSize: 12.6, marginTop: 2 }}>
+                  (아래 영역별 점수 합산)
+                </div>
+              </div>
+
+              {/* 점수 + 그래프 */}
+              <div style={pdfDivider}>
+                <div style={pdfSectionTitle}>영역별 점수</div>
+
+                <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                  <thead>
+                    <tr>
+                      <th style={{ textAlign: "left", fontSize: 12.6, color: COLORS.sub, padding: "9px 6px" }}>
+                        영역
+                      </th>
+                      <th style={{ textAlign: "left", fontSize: 12.6, color: COLORS.sub, padding: "9px 6px" }}>
+                        점수
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {areas.map((a) => (
+                      <tr key={a.id}>
+                        <td
+                          style={{
+                            padding: "9px 6px",
+                            borderTop: `1px solid ${COLORS.lineSoft}`,
+                            fontWeight: 900,
+                          }}
+                        >
+                          {a.name}
+                        </td>
+                        <td style={{ padding: "9px 6px", borderTop: `1px solid ${COLORS.lineSoft}` }}>
+                          {clampInt(scores[a.id]?.score ?? 0)} /{" "}
+                          {clampInt(scores[a.id]?.max ?? a.max_score)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+
+                <div style={{ marginTop: 16 }}>
+                  <RadarChart
+                    areas={areas}
+                    scoresMap={scores}
+                    chartSize={420}      // ✅ A4 폭 고정이라 더 크게
+                    margin={110}
+                    shiftX={0}
+                    extraRight={240}
+                    extraLeft={36}
+                    noWrap={true}
+                    labelFontSize={15}   // ✅ PDF용 라벨 폰트 살짝 업
+                  />
+                </div>
+              </div>
+
+              {/* 코멘트 */}
+              <div style={pdfDivider}>
+                <div style={pdfSectionTitle}>선택 코멘트</div>
+
+                {areas.map((a) => {
+                  const list = selectedCommentsByArea[a.id] || [];
+                  if (!list.length) return null;
+                  return (
+                    <div key={a.id} style={{ marginBottom: 12 }}>
+                      <div style={{ fontWeight: 900, fontSize: 13.8 }}>{a.name}</div>
+                      <ul style={{ marginTop: 8, marginBottom: 0, paddingLeft: 18 }}>
+                        {list.map((t) => (
+                          <li key={t.id} style={{ marginBottom: 6, lineHeight: 1.42, color: COLORS.text }}>
+                            {t.content}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  );
+                })}
+
+                {!areas.some((a) => (selectedCommentsByArea[a.id] || []).length) && (
+                  <div style={{ color: COLORS.sub }}>선택된 코멘트가 없습니다.</div>
+                )}
+              </div>
+
+              {/* 교재 */}
+              <div style={pdfDivider}>
+                <div style={pdfSectionTitle}>첫 교재 안내</div>
+                <div style={{ lineHeight: 1.5, color: COLORS.sub }}>
+                  <div>
+                    <span style={{ fontWeight: 900, color: COLORS.text }}>단어</span>:{" "}
+                    {safeText(session.first_book_vocab)}
+                  </div>
+                  <div>
+                    <span style={{ fontWeight: 900, color: COLORS.text }}>문법/구문</span>:{" "}
+                    {safeText(session.first_book_grammar)}
+                  </div>
+                  <div>
+                    <span style={{ fontWeight: 900, color: COLORS.text }}>독해</span>:{" "}
+                    {safeText(session.first_book_reading)}
+                  </div>
+                </div>
+              </div>
+
+              {/* ✅ 하단 중앙 로고 */}
+              <div style={{ marginTop: 18, paddingTop: 14, borderTop: `1px solid ${COLORS.lineSoft}` }}>
+                <div style={{ display: "flex", justifyContent: "center" }}>
+                  <img
+                    src={LOGO_SRC}
+                    alt="블라썸에듀"
+                    crossOrigin="anonymous"
+                    style={{ width: 84, height: 84, objectFit: "contain", opacity: 0.95 }}
+                    onError={(e) => {
+                      e.currentTarget.style.display = "none";
+                    }}
+                  />
+                </div>
               </div>
             </div>
           </div>
