@@ -1037,7 +1037,7 @@ export default function CounselingSessionPage() {
               }}
             >
               {/* 코멘트 */}
-              <div style={pdfSectionTitle}>선택 코멘트</div>
+              <div style={pdfSectionTitle}>유형별 진단</div>
 
               {areas.map((a) => {
                 const list = selectedCommentsByArea[a.id] || [];
