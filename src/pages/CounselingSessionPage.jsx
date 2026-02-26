@@ -78,7 +78,7 @@ function withTimeout(promise, ms, message = "시간 초과") {
  * ✅ 추가:
  * - extraRight/extraLeft: SVG 자체 가로폭을 늘려 라벨이 캔버스 밖으로 안 나가게
  * - noWrap: PDF에서 차트+요약 줄바꿈 방지
- * - labelFontSize: 라벨 폰트 크기(기본 14)
+ * - labelFontSize: 라벨 폰트 크기
  */
 function RadarChart({
   areas,
@@ -102,11 +102,9 @@ function RadarChart({
   const n = items.length;
   if (!n) return null;
 
-  // ✅ SVG를 “가로로” 더 넓게 만든다
   const svgW = chartSize + margin * 2 + extraLeft + extraRight;
   const svgH = chartSize + margin * 2;
 
-  // ✅ 중심도 extraLeft만큼 오른쪽으로 밀어준다
   const cx = margin + extraLeft + chartSize / 2 + shiftX;
   const cy = margin + chartSize / 2;
 
@@ -191,15 +189,11 @@ function RadarChart({
         ))}
 
         {/* 데이터 */}
-        <polygon
-          points={dataPoly}
-          fill={COLORS.blueSoft}
-          stroke={COLORS.blue}
-          strokeWidth="2"
-        />
+        <polygon points={dataPoly} fill={COLORS.blueSoft} stroke={COLORS.blue} strokeWidth="2" />
 
         {/* 점 */}
-        {items.map((it, i) => {
+        {items.map((it) => {
+          const i = items.findIndex((x) => x.id === it.id);
           const r = R * (it.p / 100);
           const p = pt(r, i);
           return (
@@ -276,7 +270,9 @@ export default function CounselingSessionPage() {
   const [saving, setSaving] = useState(false);
   const [pdfBusy, setPdfBusy] = useState(false);
 
-  const reportRef = useRef(null);
+  // ✅ PDF 페이지를 2개로 분리
+  const page1Ref = useRef(null);
+  const page2Ref = useRef(null);
 
   // ✅ 로고 경로 (Vite base 경로 대응)
   const LOGO_SRC = `${import.meta.env.BASE_URL}blossom-logo.png`;
@@ -451,7 +447,6 @@ export default function CounselingSessionPage() {
     }
   }
 
-  // ✅ 캡처 전 이미지 로딩을 "무조건 끝나게" 기다림(깨진 이미지 포함) + 타임아웃
   async function waitForImages(rootEl, timeoutMs = 8000) {
     const imgs = Array.from(rootEl?.querySelectorAll?.("img") || []);
     if (!imgs.length) return;
@@ -459,88 +454,95 @@ export default function CounselingSessionPage() {
     const tasks = imgs.map(
       (img) =>
         new Promise((resolve) => {
-          // ✅ 핵심: complete면(깨진 이미지 포함) 더 기다리지 말고 바로 통과
           if (img.complete) return resolve();
-
           const done = () => resolve();
           img.addEventListener("load", done, { once: true });
           img.addEventListener("error", done, { once: true });
-
-          // 안전장치(개별 이미지)
           setTimeout(done, 3000);
         })
     );
 
-    // 전체 타임아웃
     try {
       await withTimeout(Promise.all(tasks), timeoutMs, "이미지 로딩 지연");
-    } catch {
-      // 타임아웃이더라도 진행(캡처가 멈추는 것보다 낫다)
-    }
+    } catch {}
   }
 
-  // ===== PDF 생성 =====
+  function addCanvasAsPage(pdf, canvas, { marginMm = 8 } = {}) {
+    const pageW = 210;
+    const pageH = 297;
+    const contentW = pageW - marginMm * 2;
+    const contentH = pageH - marginMm * 2;
+
+    const imgData = canvas.toDataURL("image/png");
+    const imgProps = pdf.getImageProperties(imgData);
+
+    const imgW = contentW;
+    const imgH = (imgProps.height * imgW) / imgProps.width;
+
+    // ✅ 각 페이지 DOM을 “페이지에 맞게” 만들었기 때문에,
+    // 여기서는 한 페이지에만 넣고(넘치지 않게) 여백 기준으로 배치
+    // 혹시라도 아주 미세하게 넘치면 높이에 맞춰 축소(잘림 방지)
+    let drawW = imgW;
+    let drawH = imgH;
+    if (drawH > contentH) {
+      const ratio = contentH / drawH;
+      drawH = contentH;
+      drawW = drawW * ratio;
+    }
+
+    const x = marginMm + (contentW - drawW) / 2;
+    const y = marginMm + (contentH - drawH) / 2;
+
+    pdf.addImage(imgData, "PNG", x, y, drawW, drawH);
+  }
+
+  // ===== PDF 생성(2페이지 고정) =====
   async function buildPdfBlob() {
-    if (!reportRef.current) throw new Error("PDF 영역이 없습니다.");
+    if (!page1Ref.current || !page2Ref.current) throw new Error("PDF 영역이 없습니다.");
 
-    const el = reportRef.current;
-
-    // ✅ 폰트 로딩 대기(있는 브라우저만)
+    // 폰트 로딩 대기
     if (document?.fonts?.ready) {
       try {
         await withTimeout(document.fonts.ready, 3000, "폰트 로딩 지연");
       } catch {}
     }
 
-    // ✅ 이미지 로딩 대기(깨진 이미지도 통과) + 레이아웃 안정화
-    await waitForImages(el, 8000);
+    // 이미지 로딩 대기(페이지별)
+    await waitForImages(page1Ref.current, 8000);
+    await waitForImages(page2Ref.current, 8000);
     await new Promise((r) => setTimeout(r, 120));
 
-    const canvas = await withTimeout(
-      html2canvas(el, {
-        scale: 1.7, // ✅ A4 폭 고정으로 글자가 커져서 scale을 크게 안 해도 선명함
-        useCORS: true,
-        backgroundColor: "#ffffff",
-        scrollY: -window.scrollY,
-        windowWidth: el.scrollWidth,
-        windowHeight: el.scrollHeight,
+    const commonOpts = {
+      scale: 1.7,
+      useCORS: true,
+      backgroundColor: "#ffffff",
+      scrollY: -window.scrollY,
+    };
+
+    const canvas1 = await withTimeout(
+      html2canvas(page1Ref.current, {
+        ...commonOpts,
+        windowWidth: page1Ref.current.scrollWidth,
+        windowHeight: page1Ref.current.scrollHeight,
       }),
       25000,
-      "PDF 캡처가 너무 오래 걸립니다"
+      "PDF(1페이지) 캡처가 너무 오래 걸립니다"
     );
 
-    const imgData = canvas.toDataURL("image/png");
+    const canvas2 = await withTimeout(
+      html2canvas(page2Ref.current, {
+        ...commonOpts,
+        windowWidth: page2Ref.current.scrollWidth,
+        windowHeight: page2Ref.current.scrollHeight,
+      }),
+      25000,
+      "PDF(2페이지) 캡처가 너무 오래 걸립니다"
+    );
+
     const pdf = new jsPDF("p", "mm", "a4");
-
-    const pageW = 210;
-    const pageH = 297;
-
-    // ✅ “꽉참” 느낌 + 가독성 위해 안전 여백
-    const margin = 8; // mm
-    const contentW = pageW - margin * 2;
-    const contentH = pageH - margin * 2;
-
-    const imgProps = pdf.getImageProperties(imgData);
-    const imgW = contentW;
-    const imgH = (imgProps.height * imgW) / imgProps.width;
-
-    // 한 페이지면 중앙 배치(여백 기준)
-    if (imgH <= contentH) {
-      pdf.addImage(imgData, "PNG", margin, margin, imgW, imgH);
-      return pdf.output("blob");
-    }
-
-    // 여러 페이지: 기존 방식 + 여백 적용
-    let remaining = imgH;
-    let position = margin; // y
-    while (remaining > 0) {
-      pdf.addImage(imgData, "PNG", margin, position, imgW, imgH);
-      remaining -= contentH;
-      if (remaining > 0) {
-        pdf.addPage();
-        position -= contentH; // 다음 페이지는 위로 당겨서 이어붙임
-      }
-    }
+    addCanvasAsPage(pdf, canvas1, { marginMm: 8 });
+    pdf.addPage();
+    addCanvasAsPage(pdf, canvas2, { marginMm: 8 });
 
     return pdf.output("blob");
   }
@@ -608,7 +610,7 @@ export default function CounselingSessionPage() {
     return byArea;
   }, [areas, templatesByArea, checkedTemplateIds]);
 
-  // ===== 스타일 =====
+  // ===== 화면 스타일 =====
   const wrap = {
     minHeight: "100vh",
     padding: "calc(env(safe-area-inset-top) + 16px) 16px calc(env(safe-area-inset-bottom) + 96px)",
@@ -652,23 +654,17 @@ export default function CounselingSessionPage() {
     zIndex: 60,
   };
 
-  // ✅ PDF 캡처용 A4 “픽셀” 폭 (대부분 브라우저에서 96dpi 기준)
-  // 캡처 대상이 이 폭으로 고정되면, jsPDF에 넣을 때 글자가 작아지는 문제가 확 줄어듭니다.
-  const A4_PX_W = 794; // ≈ 210mm @96dpi
-  const A4_PX_PAD = 46; // 페이지 여백 느낌 (PDF에서 8mm 마진과 함께 가독성/여백 밸런스)
+  // ✅ PDF 캡처용 A4 픽셀 폭(96dpi 기준)
+  const A4_PX_W = 794;
+  const A4_PAD = 44;
 
-  // ✅ PDF 미리보기(캡처 대상) 내부 타이포 스케일(가독성)
+  // ✅ PDF 타이포(디자인 유지 + 1페이지 맞춤용으로 “조금만” 조절)
   const pdfBase = {
-    fontSize: 13.6,
-    lineHeight: 1.45,
+    fontSize: 13.2,
+    lineHeight: 1.42,
     color: COLORS.text,
     letterSpacing: -0.1,
   };
-
-  const pdfTitle = { fontSize: 22, fontWeight: 900, marginBottom: 10, letterSpacing: -0.4 };
-  const pdfMeta = { display: "flex", flexWrap: "wrap", gap: 12, color: COLORS.sub, fontSize: 13 };
-  const pdfSectionTitle = { fontWeight: 900, marginBottom: 8, fontSize: 15.5 };
-  const pdfSubTitle = { fontWeight: 900, color: COLORS.text, marginBottom: 2, fontSize: 13.8 };
 
   const pdfCard = {
     background: "#ffffff",
@@ -677,7 +673,11 @@ export default function CounselingSessionPage() {
     boxShadow: "0 6px 18px rgba(31,42,68,0.06)",
   };
 
-  const pdfDivider = { borderTop: `1px solid ${COLORS.lineSoft}`, paddingTop: 12, marginTop: 12 };
+  const pdfTitle = { fontSize: 20.5, fontWeight: 900, marginBottom: 10, letterSpacing: -0.4 };
+  const pdfMeta = { display: "flex", flexWrap: "wrap", gap: 10, color: COLORS.sub, fontSize: 13 };
+  const pdfSectionTitle = { fontWeight: 900, marginBottom: 8, fontSize: 15.2 };
+  const pdfSubTitle = { fontWeight: 900, color: COLORS.text, marginBottom: 2, fontSize: 13.6 };
+  const pdfDivider = { borderTop: `1px solid ${COLORS.lineSoft}`, paddingTop: 10, marginTop: 10 };
 
   if (!session)
     return (
@@ -690,14 +690,7 @@ export default function CounselingSessionPage() {
     <>
       <div style={wrap}>
         {/* 상단: 제목만 */}
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            gap: 10,
-            alignItems: "flex-start",
-          }}
-        >
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "flex-start" }}>
           <div>
             <h1 style={h1}>상담 입력</h1>
             <div style={sub}>
@@ -745,9 +738,7 @@ export default function CounselingSessionPage() {
 
         {/* 입력: 수업정보 */}
         <div style={{ marginTop: 14, borderTop: `1px solid ${COLORS.lineSoft}`, paddingTop: 14 }}>
-          <div style={{ fontWeight: 900, fontSize: 14, marginBottom: 10 }}>
-            수업 정보 (PDF 상단에 표시)
-          </div>
+          <div style={{ fontWeight: 900, fontSize: 14, marginBottom: 10 }}>수업 정보 (PDF 상단에 표시)</div>
 
           <div style={{ fontWeight: 900, marginBottom: 8, fontSize: 13 }}>일대일</div>
           <div style={row}>
@@ -786,9 +777,7 @@ export default function CounselingSessionPage() {
             <select
               style={{ ...input, minWidth: 120 }}
               value={session.reading_weekday ?? 1}
-              onChange={(e) =>
-                setSession((p) => ({ ...p, reading_weekday: Number(e.target.value) }))
-              }
+              onChange={(e) => setSession((p) => ({ ...p, reading_weekday: Number(e.target.value) }))}
             >
               {WEEKDAYS.map((w) => (
                 <option key={w.v} value={w.v}>
@@ -800,18 +789,14 @@ export default function CounselingSessionPage() {
             <input
               style={{ ...input, minWidth: 220 }}
               value={session.reading_teacher_name || ""}
-              onChange={(e) =>
-                setSession((p) => ({ ...p, reading_teacher_name: e.target.value }))
-              }
+              onChange={(e) => setSession((p) => ({ ...p, reading_teacher_name: e.target.value }))}
               placeholder="독해 선생님 성함"
             />
             <input
               style={{ ...input, minWidth: 180 }}
               type="time"
               value={fmtTimeHM(session.reading_class_time || "")}
-              onChange={(e) =>
-                setSession((p) => ({ ...p, reading_class_time: e.target.value }))
-              }
+              onChange={(e) => setSession((p) => ({ ...p, reading_class_time: e.target.value }))}
               placeholder="독해 수업시간"
             />
           </div>
@@ -827,36 +812,18 @@ export default function CounselingSessionPage() {
           </div>
 
           <div style={{ overflowX: "auto" }}>
-            <table
-              style={{
-                width: "100%",
-                borderCollapse: "collapse",
-                borderTop: `1px solid ${COLORS.line}`,
-              }}
-            >
+            <table style={{ width: "100%", borderCollapse: "collapse", borderTop: `1px solid ${COLORS.line}` }}>
               <thead>
                 <tr>
-                  <th style={{ textAlign: "left", padding: "10px 8px", fontSize: 12, color: COLORS.sub }}>
-                    영역
-                  </th>
-                  <th style={{ textAlign: "left", padding: "10px 8px", fontSize: 12, color: COLORS.sub }}>
-                    점수
-                  </th>
-                  <th style={{ textAlign: "left", padding: "10px 8px", fontSize: 12, color: COLORS.sub }}>
-                    총점
-                  </th>
+                  <th style={{ textAlign: "left", padding: "10px 8px", fontSize: 12, color: COLORS.sub }}>영역</th>
+                  <th style={{ textAlign: "left", padding: "10px 8px", fontSize: 12, color: COLORS.sub }}>점수</th>
+                  <th style={{ textAlign: "left", padding: "10px 8px", fontSize: 12, color: COLORS.sub }}>총점</th>
                 </tr>
               </thead>
               <tbody>
                 {areas.map((a) => (
                   <tr key={a.id}>
-                    <td
-                      style={{
-                        padding: "10px 8px",
-                        borderBottom: `1px solid ${COLORS.lineSoft}`,
-                        fontWeight: 900,
-                      }}
-                    >
+                    <td style={{ padding: "10px 8px", borderBottom: `1px solid ${COLORS.lineSoft}`, fontWeight: 900 }}>
                       {a.name}
                     </td>
                     <td style={{ padding: "10px 8px", borderBottom: `1px solid ${COLORS.lineSoft}` }}>
@@ -867,13 +834,7 @@ export default function CounselingSessionPage() {
                         onChange={(e) => updateScore(a.id, e.target.value)}
                       />
                     </td>
-                    <td
-                      style={{
-                        padding: "10px 8px",
-                        borderBottom: `1px solid ${COLORS.lineSoft}`,
-                        color: COLORS.sub,
-                      }}
-                    >
+                    <td style={{ padding: "10px 8px", borderBottom: `1px solid ${COLORS.lineSoft}`, color: COLORS.sub }}>
                       {scores[a.id]?.max ?? a.max_score}
                     </td>
                   </tr>
@@ -904,15 +865,7 @@ export default function CounselingSessionPage() {
               <div style={{ fontWeight: 900, fontSize: 13 }}>{a.name}</div>
               <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 8 }}>
                 {(templatesByArea[a.id] || []).map((t) => (
-                  <label
-                    key={t.id}
-                    style={{
-                      display: "flex",
-                      gap: 10,
-                      alignItems: "flex-start",
-                      cursor: "pointer",
-                    }}
-                  >
+                  <label key={t.id} style={{ display: "flex", gap: 10, alignItems: "flex-start", cursor: "pointer" }}>
                     <input
                       type="checkbox"
                       checked={checkedTemplateIds.has(t.id)}
@@ -922,9 +875,7 @@ export default function CounselingSessionPage() {
                     <div style={{ fontSize: 13, lineHeight: 1.35 }}>{t.content}</div>
                   </label>
                 ))}
-                {!templatesByArea[a.id]?.length && (
-                  <div style={{ color: COLORS.sub, fontSize: 13 }}>코멘트 없음</div>
-                )}
+                {!templatesByArea[a.id]?.length && <div style={{ color: COLORS.sub, fontSize: 13 }}>코멘트 없음</div>}
               </div>
             </div>
           ))}
@@ -955,50 +906,40 @@ export default function CounselingSessionPage() {
           </div>
         </div>
 
-        {/* ===== PDF 미리보기 ===== */}
+        {/* ===== PDF 미리보기 (2페이지) ===== */}
         <div style={{ marginTop: 18, borderTop: `1px solid ${COLORS.lineSoft}`, paddingTop: 14 }}>
           <div style={{ fontWeight: 900, fontSize: 14, marginBottom: 10 }}>PDF 미리보기</div>
 
-          {/* ✅ 화면에서는 반응형으로 보이게: 가로가 좁으면 스크롤 */}
           <div style={{ overflowX: "auto", paddingBottom: 8 }}>
+            {/* ===== 1페이지 ===== */}
             <div
-              ref={reportRef}
+              ref={page1Ref}
               style={{
                 ...pdfCard,
                 ...pdfBase,
-
-                // ✅ 캡처 대상: A4 폭 고정(글자 커짐 + 페이지 꽉 찬 느낌)
                 width: A4_PX_W,
                 margin: "0 auto",
-                padding: A4_PX_PAD,
-
-                // html2canvas/브라우저에서 요소가 잘리는 걸 방지
+                padding: A4_PAD,
                 overflow: "visible",
               }}
             >
-              {/* 상단 헤더 */}
               <div style={pdfTitle}>산본 블라썸에듀 · 레벨테스트 상담결과</div>
 
               <div style={pdfMeta}>
                 <div>
-                  <span style={{ fontWeight: 900, color: COLORS.text }}>학생</span>:{" "}
-                  {safeText(session.student_name)}
+                  <span style={{ fontWeight: 900, color: COLORS.text }}>학생</span>: {safeText(session.student_name)}
                 </div>
                 <div>
-                  <span style={{ fontWeight: 900, color: COLORS.text }}>학교</span>:{" "}
-                  {safeText(session.student_school)}
+                  <span style={{ fontWeight: 900, color: COLORS.text }}>학교</span>: {safeText(session.student_school)}
                 </div>
                 <div>
-                  <span style={{ fontWeight: 900, color: COLORS.text }}>학년</span>:{" "}
-                  {safeText(session.student_grade)}
+                  <span style={{ fontWeight: 900, color: COLORS.text }}>학년</span>: {safeText(session.student_grade)}
                 </div>
                 <div>
-                  <span style={{ fontWeight: 900, color: COLORS.text }}>담당</span>:{" "}
-                  {safeText(session.teacher_name)}
+                  <span style={{ fontWeight: 900, color: COLORS.text }}>담당</span>: {safeText(session.teacher_name)}
                 </div>
                 <div>
-                  <span style={{ fontWeight: 900, color: COLORS.text }}>테스트</span>:{" "}
-                  {safeText(type?.name)}
+                  <span style={{ fontWeight: 900, color: COLORS.text }}>테스트</span>: {safeText(type?.name)}
                 </div>
                 <div>
                   <span style={{ fontWeight: 900, color: COLORS.text }}>날짜</span>:{" "}
@@ -1029,12 +970,10 @@ export default function CounselingSessionPage() {
 
               {/* 총점 */}
               <div style={pdfDivider}>
-                <div style={{ fontWeight: 900, fontSize: 16.5 }}>
+                <div style={{ fontWeight: 900, fontSize: 16.2 }}>
                   총점: {total.score} / {total.max}
                 </div>
-                <div style={{ color: COLORS.sub, fontSize: 12.6, marginTop: 2 }}>
-                  (아래 영역별 점수 합산)
-                </div>
+                <div style={{ color: COLORS.sub, fontSize: 12.4, marginTop: 2 }}>(아래 영역별 점수 합산)</div>
               </div>
 
               {/* 점수 + 그래프 */}
@@ -1044,10 +983,10 @@ export default function CounselingSessionPage() {
                 <table style={{ width: "100%", borderCollapse: "collapse" }}>
                   <thead>
                     <tr>
-                      <th style={{ textAlign: "left", fontSize: 12.6, color: COLORS.sub, padding: "9px 6px" }}>
+                      <th style={{ textAlign: "left", fontSize: 12.4, color: COLORS.sub, padding: "8px 6px" }}>
                         영역
                       </th>
-                      <th style={{ textAlign: "left", fontSize: 12.6, color: COLORS.sub, padding: "9px 6px" }}>
+                      <th style={{ textAlign: "left", fontSize: 12.4, color: COLORS.sub, padding: "8px 6px" }}>
                         점수
                       </th>
                     </tr>
@@ -1055,85 +994,89 @@ export default function CounselingSessionPage() {
                   <tbody>
                     {areas.map((a) => (
                       <tr key={a.id}>
-                        <td
-                          style={{
-                            padding: "9px 6px",
-                            borderTop: `1px solid ${COLORS.lineSoft}`,
-                            fontWeight: 900,
-                          }}
-                        >
+                        <td style={{ padding: "8px 6px", borderTop: `1px solid ${COLORS.lineSoft}`, fontWeight: 900 }}>
                           {a.name}
                         </td>
-                        <td style={{ padding: "9px 6px", borderTop: `1px solid ${COLORS.lineSoft}` }}>
-                          {clampInt(scores[a.id]?.score ?? 0)} /{" "}
-                          {clampInt(scores[a.id]?.max ?? a.max_score)}
+                        <td style={{ padding: "8px 6px", borderTop: `1px solid ${COLORS.lineSoft}` }}>
+                          {clampInt(scores[a.id]?.score ?? 0)} / {clampInt(scores[a.id]?.max ?? a.max_score)}
                         </td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
 
-                <div style={{ marginTop: 16 }}>
+                {/* ✅ 1페이지에 “딱” 들어가게: 그래프는 살짝만 조절 */}
+                <div style={{ marginTop: 12 }}>
                   <RadarChart
                     areas={areas}
                     scoresMap={scores}
-                    chartSize={420}      // ✅ A4 폭 고정이라 더 크게
-                    margin={110}
+                    chartSize={390}
+                    margin={104}
                     shiftX={0}
-                    extraRight={240}
-                    extraLeft={36}
+                    extraRight={230}
+                    extraLeft={34}
                     noWrap={true}
-                    labelFontSize={15}   // ✅ PDF용 라벨 폰트 살짝 업
+                    labelFontSize={15}
                   />
                 </div>
               </div>
+            </div>
 
+            <div style={{ height: 14 }} />
+
+            {/* ===== 2페이지 ===== */}
+            <div
+              ref={page2Ref}
+              style={{
+                ...pdfCard,
+                ...pdfBase,
+                width: A4_PX_W,
+                margin: "0 auto",
+                padding: A4_PAD,
+                overflow: "visible",
+              }}
+            >
               {/* 코멘트 */}
-              <div style={pdfDivider}>
-                <div style={pdfSectionTitle}>선택 코멘트</div>
+              <div style={pdfSectionTitle}>선택 코멘트</div>
 
-                {areas.map((a) => {
-                  const list = selectedCommentsByArea[a.id] || [];
-                  if (!list.length) return null;
-                  return (
-                    <div key={a.id} style={{ marginBottom: 12 }}>
-                      <div style={{ fontWeight: 900, fontSize: 13.8 }}>{a.name}</div>
-                      <ul style={{ marginTop: 8, marginBottom: 0, paddingLeft: 18 }}>
-                        {list.map((t) => (
-                          <li key={t.id} style={{ marginBottom: 6, lineHeight: 1.42, color: COLORS.text }}>
-                            {t.content}
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  );
-                })}
+              {areas.map((a) => {
+                const list = selectedCommentsByArea[a.id] || [];
+                if (!list.length) return null;
+                return (
+                  <div key={a.id} style={{ marginBottom: 12 }}>
+                    <div style={{ fontWeight: 900, fontSize: 13.8 }}>{a.name}</div>
+                    <ul style={{ marginTop: 8, marginBottom: 0, paddingLeft: 18 }}>
+                      {list.map((t) => (
+                        <li key={t.id} style={{ marginBottom: 6, lineHeight: 1.42, color: COLORS.text }}>
+                          {t.content}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                );
+              })}
 
-                {!areas.some((a) => (selectedCommentsByArea[a.id] || []).length) && (
-                  <div style={{ color: COLORS.sub }}>선택된 코멘트가 없습니다.</div>
-                )}
-              </div>
+              {!areas.some((a) => (selectedCommentsByArea[a.id] || []).length) && (
+                <div style={{ color: COLORS.sub }}>선택된 코멘트가 없습니다.</div>
+              )}
 
               {/* 교재 */}
               <div style={pdfDivider}>
                 <div style={pdfSectionTitle}>첫 교재 안내</div>
                 <div style={{ lineHeight: 1.5, color: COLORS.sub }}>
                   <div>
-                    <span style={{ fontWeight: 900, color: COLORS.text }}>단어</span>:{" "}
-                    {safeText(session.first_book_vocab)}
+                    <span style={{ fontWeight: 900, color: COLORS.text }}>단어</span>: {safeText(session.first_book_vocab)}
                   </div>
                   <div>
-                    <span style={{ fontWeight: 900, color: COLORS.text }}>문법/구문</span>:{" "}
-                    {safeText(session.first_book_grammar)}
+                    <span style={{ fontWeight: 900, color: COLORS.text }}>문법/구문</span>: {safeText(session.first_book_grammar)}
                   </div>
                   <div>
-                    <span style={{ fontWeight: 900, color: COLORS.text }}>독해</span>:{" "}
-                    {safeText(session.first_book_reading)}
+                    <span style={{ fontWeight: 900, color: COLORS.text }}>독해</span>: {safeText(session.first_book_reading)}
                   </div>
                 </div>
               </div>
 
-              {/* ✅ 하단 중앙 로고 */}
+              {/* 로고(2페이지 하단) */}
               <div style={{ marginTop: 18, paddingTop: 14, borderTop: `1px solid ${COLORS.lineSoft}` }}>
                 <div style={{ display: "flex", justifyContent: "center" }}>
                   <img
