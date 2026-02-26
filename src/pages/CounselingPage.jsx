@@ -26,6 +26,34 @@ function safeNum(v, def = 0) {
   return Number.isFinite(n) ? n : def;
 }
 
+// ✅ HH:MM(24시) 유효성 + 정규화
+function isValidHM(v) {
+  const s = (v || "").toString().trim();
+  if (!s) return true; // 빈 값 허용(null 저장)
+  return /^([01]\d|2[0-3]):[0-5]\d$/.test(s);
+}
+
+// 사용자가 "0900" 처럼 넣어도 "09:00"으로 맞춰줌(선택)
+function normalizeHM(v) {
+  let s = (v || "").toString().trim();
+
+  // 공백 제거
+  s = s.replace(/\s+/g, "");
+
+  // 숫자 4자리면 HHMM으로 보고 HH:MM으로
+  if (/^\d{4}$/.test(s)) {
+    s = `${s.slice(0, 2)}:${s.slice(2, 4)}`;
+  }
+
+  // 한글/기타 제거는 하지 않고, 콜론 하나만 남기고 싶으면 아래 주석 해제
+  // s = s.replace(/[^\d:]/g, "");
+
+  // 5글자 이상이면 앞 5글자만(예: 09:00:00 -> 09:00)
+  if (/^\d{2}:\d{2}:\d{2}$/.test(s)) s = s.slice(0, 5);
+
+  return s;
+}
+
 export default function CounselingPage() {
   const navigate = useNavigate();
 
@@ -117,7 +145,7 @@ export default function CounselingPage() {
 
     // ✅ 핵심: 현재 선택된 newCommentAreaId가 이번 영역 목록에 없으면, 첫 영역으로 강제
     const stillValid = list.some((x) => x.id === newCommentAreaId);
-    const nextAreaId = stillValid ? newCommentAreaId : (list?.[0]?.id || "");
+    const nextAreaId = stillValid ? newCommentAreaId : list?.[0]?.id || "";
     setNewCommentAreaId(nextAreaId);
 
     if (!list.length) {
@@ -183,7 +211,9 @@ export default function CounselingPage() {
       }
 
       // 2) Public 버킷일 때: Public URL fallback
-      const { data: pub } = supabase.storage.from("counseling_pdfs").getPublicUrl(path);
+      const { data: pub } = supabase.storage
+        .from("counseling_pdfs")
+        .getPublicUrl(path);
 
       const url = pub?.publicUrl;
       if (!url) throw new Error("PDF 링크 생성 실패(버킷 설정 확인 필요)");
@@ -210,7 +240,10 @@ export default function CounselingPage() {
     if (!next) return;
     const name = next.trim();
     if (!name) return;
-    const { error } = await supabase.from("counsel_test_types").update({ name }).eq("id", typeId);
+    const { error } = await supabase
+      .from("counsel_test_types")
+      .update({ name })
+      .eq("id", typeId);
     if (error) return alert("수정 실패: " + error.message);
     await loadTypes();
   }
@@ -222,7 +255,10 @@ export default function CounselingPage() {
       )
     )
       return;
-    const { error } = await supabase.from("counsel_test_types").delete().eq("id", typeId);
+    const { error } = await supabase
+      .from("counsel_test_types")
+      .delete()
+      .eq("id", typeId);
     if (error) return alert("삭제 실패: " + error.message);
     setSelectedTypeId("");
     await loadTypes();
@@ -235,7 +271,8 @@ export default function CounselingPage() {
     if (!name) return alert("영역 이름을 입력해주세요.");
 
     const max = safeNum(newAreaMax, NaN);
-    if (!Number.isFinite(max) || max < 0) return alert("총점(max_score)을 숫자로 입력해주세요.");
+    if (!Number.isFinite(max) || max < 0)
+      return alert("총점(max_score)을 숫자로 입력해주세요.");
 
     const order_index = (areas?.[areas.length - 1]?.order_index ?? -1) + 1;
 
@@ -252,7 +289,10 @@ export default function CounselingPage() {
   }
 
   async function updateArea(areaId, patch) {
-    const { error } = await supabase.from("counsel_areas").update(patch).eq("id", areaId);
+    const { error } = await supabase
+      .from("counsel_areas")
+      .update(patch)
+      .eq("id", areaId);
     if (error) return alert("영역 수정 실패: " + error.message);
     await loadAreasAndTemplates(selectedTypeId);
   }
@@ -264,7 +304,10 @@ export default function CounselingPage() {
       )
     )
       return;
-    const { error } = await supabase.from("counsel_areas").delete().eq("id", areaId);
+    const { error } = await supabase
+      .from("counsel_areas")
+      .delete()
+      .eq("id", areaId);
     if (error) return alert("영역 삭제 실패: " + error.message);
     await loadAreasAndTemplates(selectedTypeId);
   }
@@ -296,7 +339,8 @@ export default function CounselingPage() {
   // ===== 템플릿: 코멘트 =====
   async function addCommentTemplate() {
     // ✅ 이게 빈 값이면 무조건 추가가 안 됨 → 위에서 유효성 보정함
-    if (!newCommentAreaId) return alert("코멘트 템플릿을 추가할 영역을 선택해주세요.");
+    if (!newCommentAreaId)
+      return alert("코멘트 템플릿을 추가할 영역을 선택해주세요.");
 
     const content = (newCommentText || "").trim();
     if (!content) return alert("코멘트 내용을 입력해주세요.");
@@ -330,7 +374,10 @@ export default function CounselingPage() {
 
   async function deleteCommentTemplate(tid) {
     if (!confirm("이 코멘트를 삭제할까요?")) return;
-    const { error } = await supabase.from("counsel_comment_templates").delete().eq("id", tid);
+    const { error } = await supabase
+      .from("counsel_comment_templates")
+      .delete()
+      .eq("id", tid);
     if (error) return alert("코멘트 삭제 실패: " + error.message);
     await loadAreasAndTemplates(selectedTypeId);
   }
@@ -375,13 +422,23 @@ export default function CounselingPage() {
     const s = newSession;
 
     if (!(s.student_name || "").trim()) return alert("학생 이름을 입력해주세요.");
-    if (!(s.teacher_name || "").trim()) return alert("담당 선생님 성함을 입력해주세요.");
+    if (!(s.teacher_name || "").trim())
+      return alert("담당 선생님 성함을 입력해주세요.");
 
     // 요일: 월~토만
     if (![1, 2, 3, 4, 5, 6].includes(Number(s.oto_weekday)))
       return alert("일대일 요일은 월~토만 선택해주세요.");
     if (![1, 2, 3, 4, 5, 6].includes(Number(s.reading_weekday)))
       return alert("독해 요일은 월~토만 선택해주세요.");
+
+    // ✅ 시간 형식 검증(HH:MM)
+    const otoArr = normalizeHM(s.oto_arrival_time);
+    const otoCls = normalizeHM(s.oto_class_time);
+    const rdCls = normalizeHM(s.reading_class_time);
+
+    if (!isValidHM(otoArr)) return alert("일대일 등원시간은 HH:MM (24시) 형식으로 입력해주세요.");
+    if (!isValidHM(otoCls)) return alert("일대일 수업시간은 HH:MM (24시) 형식으로 입력해주세요.");
+    if (!isValidHM(rdCls)) return alert("독해 수업시간은 HH:MM (24시) 형식으로 입력해주세요.");
 
     const payload = {
       student_name: (s.student_name || "").trim(),
@@ -392,15 +449,19 @@ export default function CounselingPage() {
       test_date: s.test_date || dayjs().format("YYYY-MM-DD"),
 
       oto_weekday: Number(s.oto_weekday),
-      oto_arrival_time: s.oto_arrival_time || null,
-      oto_class_time: s.oto_class_time || null,
+      oto_arrival_time: otoArr || null,
+      oto_class_time: otoCls || null,
 
       reading_weekday: Number(s.reading_weekday),
       reading_teacher_name: (s.reading_teacher_name || "").trim() || null,
-      reading_class_time: s.reading_class_time || null,
+      reading_class_time: rdCls || null,
     };
 
-    const { data, error } = await supabase.from("counsel_sessions").insert(payload).select("id").single();
+    const { data, error } = await supabase
+      .from("counsel_sessions")
+      .insert(payload)
+      .select("id")
+      .single();
     if (error) return alert("새 상담 생성 실패: " + error.message);
 
     // 영역 점수 기본행(0점)
@@ -601,7 +662,8 @@ export default function CounselingPage() {
       <div style={{ ...sectionTitle, marginTop: 14 }}>
         2) 영역(총점) — 수정/삭제/순서{" "}
         <span style={{ color: COLORS.sub, fontSize: 12, fontWeight: 800 }}>
-          (현재 유형 총점: <span style={{ color: COLORS.text, fontWeight: 900 }}>{typeTotalMax}</span>점)
+          (현재 유형 총점:{" "}
+          <span style={{ color: COLORS.text, fontWeight: 900 }}>{typeTotalMax}</span>점)
         </span>
       </div>
 
@@ -632,9 +694,7 @@ export default function CounselingPage() {
         }}
       >
         {!areas.length ? (
-          <div style={{ color: COLORS.sub, fontSize: 13 }}>
-            영역이 아직 없습니다.
-          </div>
+          <div style={{ color: COLORS.sub, fontSize: 13 }}>영역이 아직 없습니다.</div>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {areas.map((a, idx) => (
@@ -703,10 +763,7 @@ export default function CounselingPage() {
                   >
                     총점수정
                   </button>
-                  <button
-                    style={smallBtn}
-                    onClick={() => deleteArea(a.id, a.name)}
-                  >
+                  <button style={smallBtn} onClick={() => deleteArea(a.id, a.name)}>
                     삭제
                   </button>
                 </div>
@@ -813,10 +870,7 @@ export default function CounselingPage() {
                         >
                           수정
                         </button>
-                        <button
-                          style={smallBtn}
-                          onClick={() => deleteCommentTemplate(t.id)}
-                        >
+                        <button style={smallBtn} onClick={() => deleteCommentTemplate(t.id)}>
                           삭제
                         </button>
                       </div>
@@ -862,7 +916,7 @@ export default function CounselingPage() {
                 <td style={td}>
                   <div style={{ fontWeight: 900 }}>{s.student_name}</div>
                   <div style={{ color: COLORS.sub, fontSize: 12 }}>
-                    {(s.student_school || "-")} / {(s.student_grade || "-")}
+                    {s.student_school || "-"} / {s.student_grade || "-"}
                   </div>
                 </td>
                 <td style={td}>{s.test_type_name}</td>
@@ -1012,11 +1066,15 @@ export default function CounselingPage() {
                     <option value={6}>토</option>
                   </select>
                 </div>
+
+                {/* ✅ 드롭다운/피커 대신 직접 HH:MM 입력 */}
                 <div style={{ flex: "1 1 180px" }}>
                   <div style={fieldLabel}>등원시간 (HH:MM)</div>
                   <input
                     style={{ ...input2, width: "100%" }}
-                    type="time"
+                    type="text"
+                    inputMode="numeric"
+                    placeholder="예: 16:00"
                     value={newSession.oto_arrival_time}
                     onChange={(e) =>
                       setNewSession((p) => ({
@@ -1024,13 +1082,22 @@ export default function CounselingPage() {
                         oto_arrival_time: e.target.value,
                       }))
                     }
+                    onBlur={(e) =>
+                      setNewSession((p) => ({
+                        ...p,
+                        oto_arrival_time: normalizeHM(e.target.value),
+                      }))
+                    }
                   />
                 </div>
+
                 <div style={{ flex: "1 1 180px" }}>
                   <div style={fieldLabel}>수업시간 (HH:MM)</div>
                   <input
                     style={{ ...input2, width: "100%" }}
-                    type="time"
+                    type="text"
+                    inputMode="numeric"
+                    placeholder="예: 16:40"
                     value={newSession.oto_class_time}
                     onChange={(e) =>
                       setNewSession((p) => ({
@@ -1038,8 +1105,19 @@ export default function CounselingPage() {
                         oto_class_time: e.target.value,
                       }))
                     }
+                    onBlur={(e) =>
+                      setNewSession((p) => ({
+                        ...p,
+                        oto_class_time: normalizeHM(e.target.value),
+                      }))
+                    }
                   />
                 </div>
+              </div>
+
+              {/* 간단 안내 */}
+              <div style={{ marginTop: 6, color: COLORS.sub, fontSize: 12 }}>
+                시간은 24시 기준 HH:MM 형식으로 입력해주세요. (예: 09:00, 16:40)
               </div>
             </div>
 
@@ -1085,11 +1163,15 @@ export default function CounselingPage() {
                     }
                   />
                 </div>
+
+                {/* ✅ 드롭다운/피커 대신 직접 HH:MM 입력 */}
                 <div style={{ flex: "1 1 180px" }}>
                   <div style={fieldLabel}>수업시간 (HH:MM)</div>
                   <input
                     style={{ ...input2, width: "100%" }}
-                    type="time"
+                    type="text"
+                    inputMode="numeric"
+                    placeholder="예: 19:00"
                     value={newSession.reading_class_time}
                     onChange={(e) =>
                       setNewSession((p) => ({
@@ -1097,8 +1179,18 @@ export default function CounselingPage() {
                         reading_class_time: e.target.value,
                       }))
                     }
+                    onBlur={(e) =>
+                      setNewSession((p) => ({
+                        ...p,
+                        reading_class_time: normalizeHM(e.target.value),
+                      }))
+                    }
                   />
                 </div>
+              </div>
+
+              <div style={{ marginTop: 6, color: COLORS.sub, fontSize: 12 }}>
+                시간은 24시 기준 HH:MM 형식으로 입력해주세요. (예: 19:00)
               </div>
             </div>
 
