@@ -47,9 +47,12 @@ import ScoreQueryPage from "./pages/grades/ScoreQueryPage";
 // ✅ 학부모 연락양식
 import ContactFormsPage from "./pages/ContactFormsPage";
 
-// ✅ 상담관리 (신규)
+// ✅ 상담관리
 import CounselingPage from "./pages/CounselingPage";
 import CounselingSessionPage from "./pages/CounselingSessionPage";
+
+// ✅ 구글시트 복붙용
+import GoogleSheetExportPage from "./pages/GoogleSheetExportPage";
 
 import { isAuthed } from "./utils/auth";
 
@@ -178,6 +181,12 @@ export default function App() {
           <Route
             path="/counseling/:sessionId"
             element={<CounselingSessionPage />}
+          />
+
+          {/* ✅ 구글시트 복붙용 */}
+          <Route
+            path="/google-sheet-export"
+            element={<GoogleSheetExportPage />}
           />
         </Route>
 
