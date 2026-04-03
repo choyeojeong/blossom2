@@ -1,4 +1,3 @@
-// src/pages/grades/StudentGradesPage.jsx
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import html2canvas from "html2canvas";
@@ -25,7 +24,6 @@ function fmtScore(v) {
   if (v === null || v === undefined || v === "") return "-";
   const n = Number(v);
   if (Number.isNaN(n)) return "-";
-  // 소수 둘째 자리까지
   return n.toFixed(2).replace(/\.00$/, ".0").replace(/(\.\d)0$/, "$1");
 }
 
@@ -38,7 +36,6 @@ function fmtDelta(v) {
   return `${n > 0 ? "+" : "-"}${abs.toFixed(2).replace(/\.00$/, "")}`;
 }
 
-// 간단 SVG 라인차트(0~100 고정)
 function LineChart({ points, height = 160, title }) {
   const w = 860;
   const h = height;
@@ -57,7 +54,8 @@ function LineChart({ points, height = 160, title }) {
   const innerW = w - padL - padR;
   const innerH = h - padT - padB;
 
-  const xFor = (i) => padL + (points.length <= 1 ? innerW / 2 : (innerW * i) / (points.length - 1));
+  const xFor = (i) =>
+    padL + (points.length <= 1 ? innerW / 2 : (innerW * i) / (points.length - 1));
   const yFor = (y) => padT + ((yMax - y) * innerH) / (yMax - yMin);
 
   const poly = has
@@ -74,15 +72,32 @@ function LineChart({ points, height = 160, title }) {
   return (
     <div style={{ marginTop: 10 }}>
       {title ? (
-        <div style={{ fontWeight: 800, marginBottom: 6, color: COLORS.text }}>{title}</div>
+        <div style={{ fontWeight: 800, marginBottom: 6, color: COLORS.text }}>
+          {title}
+        </div>
       ) : null}
 
-      <svg width={w} height={h} style={{ border: `1px solid ${COLORS.border}`, borderRadius: 12, background: "#fff" }}>
+      <svg
+        width={w}
+        height={h}
+        style={{
+          border: `1px solid ${COLORS.border}`,
+          borderRadius: 12,
+          background: "#fff",
+        }}
+      >
         {[0, 50, 100].map((tick) => {
           const y = yFor(tick);
           return (
             <g key={tick}>
-              <line x1={padL} y1={y} x2={w - padR} y2={y} stroke={COLORS.border} strokeWidth="1" />
+              <line
+                x1={padL}
+                y1={y}
+                x2={w - padR}
+                y2={y}
+                stroke={COLORS.border}
+                strokeWidth="1"
+              />
               <text x={10} y={y + 4} fontSize="12" fill={COLORS.sub}>
                 {tick}
               </text>
@@ -110,7 +125,14 @@ function LineChart({ points, height = 160, title }) {
           : null}
 
         {points.map((p, i) => (
-          <text key={i} x={xFor(i)} y={h - 10} textAnchor="middle" fontSize="11" fill={COLORS.sub}>
+          <text
+            key={i}
+            x={xFor(i)}
+            y={h - 10}
+            textAnchor="middle"
+            fontSize="11"
+            fill={COLORS.sub}
+          >
             {p.xLabel}
           </text>
         ))}
@@ -127,7 +149,15 @@ function LineChart({ points, height = 160, title }) {
 
 function SectionTitle({ title, right }) {
   return (
-    <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12, marginTop: 26 }}>
+    <div
+      style={{
+        display: "flex",
+        alignItems: "baseline",
+        justifyContent: "space-between",
+        gap: 12,
+        marginTop: 26,
+      }}
+    >
       <div style={{ fontSize: 18, fontWeight: 900, color: COLORS.text }}>{title}</div>
       {right}
     </div>
@@ -158,7 +188,6 @@ export default function StudentGradesPage() {
   const [mockRows, setMockRows] = useState([]);
   const [academyRows, setAcademyRows] = useState([]);
 
-  // PDF 체크
   const [pdfParts, setPdfParts] = useState({
     school: true,
     mock: true,
@@ -166,7 +195,6 @@ export default function StudentGradesPage() {
   });
   const exportRef = useRef(null);
 
-  // 내신 입력 폼
   const [fSchool, setFSchool] = useState({
     year: 2026,
     school_grade: "중2",
@@ -176,7 +204,6 @@ export default function StudentGradesPage() {
     grade_label: "",
   });
 
-  // 모의 입력 폼
   const [fMock, setFMock] = useState({
     year: 2026,
     school_grade: "고1",
@@ -184,7 +211,6 @@ export default function StudentGradesPage() {
     score: "",
   });
 
-  // 기타 입력 폼
   const [fAcademy, setFAcademy] = useState({
     exam_date: new Date().toISOString().slice(0, 10),
     title: "",
@@ -206,7 +232,6 @@ export default function StudentGradesPage() {
   async function loadAll() {
     setLoading(true);
     try {
-      // ✅ students 실제 컬럼명으로 조회
       const { data: s, error: se } = await supabase
         .from("students")
         .select("id,name,school,grade,teacher_name,phone_digits,first_lesson_date")
@@ -215,7 +240,6 @@ export default function StudentGradesPage() {
       if (se) throw se;
       setStudent(s);
 
-      // 폼 기본값을 학생 학년에 맞게 조정
       setFSchool((p) => ({
         ...p,
         school_grade: SCHOOL_GRADES_ALL.includes(s.grade) ? s.grade : p.school_grade,
@@ -285,8 +309,6 @@ export default function StudentGradesPage() {
 
     setSaving(true);
     try {
-      // ✅ partial unique index(WHERE type=...) 매칭 실패 방지:
-      //    type 포함 일반 unique로 바꾼 경우에 맞춰 onConflict도 type 포함으로
       const { error } = await supabase.from("student_scores").upsert(payload, {
         onConflict: "student_id,type,year,school_grade,semester,exam_kind",
       });
@@ -325,7 +347,6 @@ export default function StudentGradesPage() {
 
     setSaving(true);
     try {
-      // ✅ type 포함 onConflict
       const { error } = await supabase.from("student_scores").upsert(payload, {
         onConflict: "student_id,type,year,school_grade,month",
       });
@@ -366,7 +387,6 @@ export default function StudentGradesPage() {
 
     setSaving(true);
     try {
-      // ✅ type 포함 onConflict (DB를 type 포함 unique로 정리한 경우)
       const { error } = await supabase.from("student_scores").upsert(payload, {
         onConflict: "student_id,type,exam_date,title",
       });
@@ -397,7 +417,9 @@ export default function StudentGradesPage() {
   const schoolChartPoints = useMemo(() => {
     const asc = [...schoolRows].sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
     return asc.map((r) => ({
-      xLabel: `${r.year ?? ""}${r.semester ? ` ${r.semester}` : ""}${r.exam_kind ? ` ${r.exam_kind}` : ""}`.trim() || "-",
+      xLabel:
+        `${r.year ?? ""}${r.semester ? ` ${r.semester}` : ""}${r.exam_kind ? ` ${r.exam_kind}` : ""}`.trim() ||
+        "-",
       y: Number(r.score),
     }));
   }, [schoolRows]);
@@ -480,8 +502,15 @@ export default function StudentGradesPage() {
 
   return (
     <div style={{ maxWidth: 1400, margin: "26px auto", padding: 20 }}>
-      {/* 상단 헤더 */}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 12,
+          flexWrap: "wrap",
+        }}
+      >
         <div>
           <div style={{ fontSize: 22, fontWeight: 900, color: COLORS.text }}>
             {student?.name || "학생"} 성적
@@ -496,6 +525,14 @@ export default function StudentGradesPage() {
         <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
           <button type="button" onClick={() => nav(-1)} style={btnGhost}>
             뒤로
+          </button>
+
+          <button
+            type="button"
+            onClick={() => nav(`/students/${studentId}`)}
+            style={btnGhost}
+          >
+            학생상세
           </button>
 
           <div
@@ -540,7 +577,6 @@ export default function StudentGradesPage() {
         </div>
       </div>
 
-      {/* ===================== 내신 ===================== */}
       <SectionTitle
         title="내신"
         right={
@@ -552,7 +588,11 @@ export default function StudentGradesPage() {
 
       <div style={formGrid}>
         <Field label="연도">
-          <select value={fSchool.year} onChange={(e) => setFSchool((p) => ({ ...p, year: Number(e.target.value) }))} style={input}>
+          <select
+            value={fSchool.year}
+            onChange={(e) => setFSchool((p) => ({ ...p, year: Number(e.target.value) }))}
+            style={input}
+          >
             {YEARS.map((y) => (
               <option key={y} value={y}>
                 {y}
@@ -562,7 +602,11 @@ export default function StudentGradesPage() {
         </Field>
 
         <Field label="학년">
-          <select value={fSchool.school_grade} onChange={(e) => setFSchool((p) => ({ ...p, school_grade: e.target.value }))} style={input}>
+          <select
+            value={fSchool.school_grade}
+            onChange={(e) => setFSchool((p) => ({ ...p, school_grade: e.target.value }))}
+            style={input}
+          >
             {SCHOOL_GRADES_ALL.map((g) => (
               <option key={g} value={g}>
                 {g}
@@ -572,7 +616,11 @@ export default function StudentGradesPage() {
         </Field>
 
         <Field label="학기">
-          <select value={fSchool.semester} onChange={(e) => setFSchool((p) => ({ ...p, semester: e.target.value }))} style={input}>
+          <select
+            value={fSchool.semester}
+            onChange={(e) => setFSchool((p) => ({ ...p, semester: e.target.value }))}
+            style={input}
+          >
             {SEMESTERS.map((s) => (
               <option key={s} value={s}>
                 {s}
@@ -582,7 +630,11 @@ export default function StudentGradesPage() {
         </Field>
 
         <Field label="시험">
-          <select value={fSchool.exam_kind} onChange={(e) => setFSchool((p) => ({ ...p, exam_kind: e.target.value }))} style={input}>
+          <select
+            value={fSchool.exam_kind}
+            onChange={(e) => setFSchool((p) => ({ ...p, exam_kind: e.target.value }))}
+            style={input}
+          >
             {EXAM_KINDS.map((k) => (
               <option key={k} value={k}>
                 {k}
@@ -633,7 +685,6 @@ export default function StudentGradesPage() {
 
       <LineChart points={schoolChartPoints} title="내신 점수 변동 (0-100)" />
 
-      {/* ===================== 모의고사 ===================== */}
       {isHigh ? (
         <>
           <SectionTitle
@@ -647,7 +698,11 @@ export default function StudentGradesPage() {
 
           <div style={formGrid4}>
             <Field label="연도">
-              <select value={fMock.year} onChange={(e) => setFMock((p) => ({ ...p, year: Number(e.target.value) }))} style={input}>
+              <select
+                value={fMock.year}
+                onChange={(e) => setFMock((p) => ({ ...p, year: Number(e.target.value) }))}
+                style={input}
+              >
                 {YEARS.map((y) => (
                   <option key={y} value={y}>
                     {y}
@@ -657,7 +712,11 @@ export default function StudentGradesPage() {
             </Field>
 
             <Field label="학년(고1~고3)">
-              <select value={fMock.school_grade} onChange={(e) => setFMock((p) => ({ ...p, school_grade: e.target.value }))} style={input}>
+              <select
+                value={fMock.school_grade}
+                onChange={(e) => setFMock((p) => ({ ...p, school_grade: e.target.value }))}
+                style={input}
+              >
                 {SCHOOL_GRADES_HIGH.map((g) => (
                   <option key={g} value={g}>
                     {g}
@@ -667,7 +726,11 @@ export default function StudentGradesPage() {
             </Field>
 
             <Field label="월">
-              <select value={fMock.month} onChange={(e) => setFMock((p) => ({ ...p, month: Number(e.target.value) }))} style={input}>
+              <select
+                value={fMock.month}
+                onChange={(e) => setFMock((p) => ({ ...p, month: Number(e.target.value) }))}
+                style={input}
+              >
                 {MONTHS.map((m) => (
                   <option key={m} value={m}>
                     {m}월
@@ -705,7 +768,6 @@ export default function StudentGradesPage() {
         </>
       ) : null}
 
-      {/* ===================== 기타 학원 모의고사 ===================== */}
       <SectionTitle
         title="기타 학원 모의고사"
         right={
@@ -761,7 +823,6 @@ export default function StudentGradesPage() {
 
       <LineChart points={academyChartPoints} title="기타 모의고사 점수 변동 (0-100)" />
 
-      {/* ===================== PDF Export 전용 렌더(숨김) ===================== */}
       <div
         ref={exportRef}
         style={{
@@ -807,8 +868,16 @@ export default function StudentGradesPage() {
                 { title: "시험", render: (r) => `${r.year} ${r.semester} ${r.exam_kind}` },
                 { title: "점수", render: (r) => fmtScore(r.score) },
                 { title: "등급", render: (r) => (r.grade_label ? r.grade_label : "-") },
-                { title: "전 시험 대비 점수", render: (r) => (r.score_trend_symbol === "-" ? "-" : `${r.score_trend_symbol} ${fmtDelta(r.score_delta)}`) },
-                { title: "전 시험 대비 등급", render: (r) => (r.grade_trend_symbol === "-" ? "-" : `${r.grade_trend_symbol} ${fmtDelta(r.grade_delta)}`) },
+                {
+                  title: "전 시험 대비 점수",
+                  render: (r) =>
+                    r.score_trend_symbol === "-" ? "-" : `${r.score_trend_symbol} ${fmtDelta(r.score_delta)}`,
+                },
+                {
+                  title: "전 시험 대비 등급",
+                  render: (r) =>
+                    r.grade_trend_symbol === "-" ? "-" : `${r.grade_trend_symbol} ${fmtDelta(r.grade_delta)}`,
+                },
               ]}
             />
             <LineChart points={schoolChartPoints} title="내신 점수 변동 (0-100)" />
@@ -823,7 +892,11 @@ export default function StudentGradesPage() {
               columns={[
                 { title: "시험", render: (r) => `${r.year}-${String(r.month).padStart(2, "0")}` },
                 { title: "점수", render: (r) => fmtScore(r.score) },
-                { title: "이전 대비", render: (r) => (r.score_trend_symbol === "-" ? "-" : `${r.score_trend_symbol} ${fmtDelta(r.score_delta)}`) },
+                {
+                  title: "이전 대비",
+                  render: (r) =>
+                    r.score_trend_symbol === "-" ? "-" : `${r.score_trend_symbol} ${fmtDelta(r.score_delta)}`,
+                },
               ]}
             />
             <LineChart points={mockChartPoints} title="모의고사 점수 변동 (0-100)" />
@@ -838,7 +911,11 @@ export default function StudentGradesPage() {
               columns={[
                 { title: "시험", render: (r) => `${r.exam_date} · ${r.title}` },
                 { title: "점수", render: (r) => fmtScore(r.score) },
-                { title: "이전 대비", render: (r) => (r.score_trend_symbol === "-" ? "-" : `${r.score_trend_symbol} ${fmtDelta(r.score_delta)}`) },
+                {
+                  title: "이전 대비",
+                  render: (r) =>
+                    r.score_trend_symbol === "-" ? "-" : `${r.score_trend_symbol} ${fmtDelta(r.score_delta)}`,
+                },
               ]}
             />
             <LineChart points={academyChartPoints} title="기타 모의고사 점수 변동 (0-100)" />
@@ -851,7 +928,15 @@ export default function StudentGradesPage() {
 
 function ScoresTable({ rows, columns, onDelete }) {
   return (
-    <div style={{ marginTop: 12, border: `1px solid ${COLORS.border}`, borderRadius: 14, overflow: "hidden", background: "#fff" }}>
+    <div
+      style={{
+        marginTop: 12,
+        border: `1px solid ${COLORS.border}`,
+        borderRadius: 14,
+        overflow: "hidden",
+        background: "#fff",
+      }}
+    >
       <table style={{ width: "100%", borderCollapse: "collapse" }}>
         <thead style={{ background: COLORS.soft }}>
           <tr>
@@ -899,7 +984,14 @@ function ExportTable({ rows, columns }) {
         <thead style={{ background: "#f3f6ff" }}>
           <tr>
             {columns.map((c, i) => (
-              <th key={i} style={{ textAlign: "left", padding: "8px 10px", borderBottom: `1px solid ${COLORS.border}` }}>
+              <th
+                key={i}
+                style={{
+                  textAlign: "left",
+                  padding: "8px 10px",
+                  borderBottom: `1px solid ${COLORS.border}`,
+                }}
+              >
                 {c.title}
               </th>
             ))}

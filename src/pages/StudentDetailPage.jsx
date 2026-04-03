@@ -1,4 +1,3 @@
-// src/pages/StudentDetailPage.jsx
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import dayjs from "dayjs";
@@ -636,15 +635,11 @@ export default function StudentDetailPage() {
   }, [studentId, rangeMin, rangeMax]);
 
   // ✅✅✅ Realtime: 학생관리에서 "학생/추가등원/이벤트" 바뀌면 상세페이지에 즉시 반영
-  // - students: name/school/grade/weekday 규칙 변경 즉시 반영
-  // - student_extra_rules: 추가등원 요일 변경 즉시 반영(녹색 하이라이트)
-  // - student_events: 트리거로 재생성/정리된 이벤트도 범위 안이면 즉시 반영(칩/색상)
   useEffect(() => {
     if (!studentId) return;
 
     const ch = supabase
       .channel(`rt-student-detail-${studentId}`)
-      // students 변경
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "students", filter: `id=eq.${studentId}` },
@@ -672,12 +667,10 @@ export default function StudentDetailPage() {
           });
         }
       )
-      // extra_rules 변경(추가등원 요일)
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "student_extra_rules", filter: `student_id=eq.${studentId}` },
-        async (payload) => {
-          // 범위랑 상관없이: 요일 하이라이트는 항상 즉시 반영하는게 체감 좋음
+        async () => {
           try {
             const { data: extra, error: extraErr } = await supabase.from("student_extra_rules").select("weekday").eq("student_id", studentId);
             if (extraErr) throw extraErr;
@@ -693,12 +686,10 @@ export default function StudentDetailPage() {
 
             setStudent((prev) => (prev ? { ...prev, __extraWeekdays: extraWeekdays } : prev));
           } catch (e) {
-            // 여기서 err 토스트성으로 띄우면 너무 자주 보여서 최소화
             console.error(e);
           }
         }
       )
-      // events 변경(트리거로 이벤트가 바뀌는 케이스 포함)
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "student_events", filter: `student_id=eq.${studentId}` },
@@ -706,11 +697,8 @@ export default function StudentDetailPage() {
           const row = payload.new || payload.old;
           const d = row?.event_date;
           if (!d) return;
-
-          // 현재 화면 범위 안 날짜만 즉시 갱신
           if (!inRange(d)) return;
 
-          // 이벤트는 집계 로직이 있어서 부분 patch보다 재로드가 안전
           try {
             await loadEventsInRange(rangeMin, rangeMax);
           } catch (e) {
@@ -1281,7 +1269,7 @@ export default function StudentDetailPage() {
     return c;
   }, [selectedLectureGroups]);
 
-  // ✅ 오버레이 닫을 때: 상세 학생 정보 다시 로드(학생관리에서 수정했을 수도 있으니까)
+  // ✅ 오버레이 닫을 때: 상세 학생 정보 다시 로드
   async function closeStudentsManage() {
     setShowStudentsManage(false);
     try {
@@ -1308,6 +1296,15 @@ export default function StudentDetailPage() {
             {/* ✅ 학생관리 버튼 */}
             <button type="button" style={btnPrimary} onClick={() => setShowStudentsManage(true)}>
               학생관리
+            </button>
+
+            {/* ✅ 추가: 성적페이지 이동 */}
+            <button
+              type="button"
+              style={btnPrimary}
+              onClick={() => nav(`/grades/students/${studentId}`)}
+            >
+              성적페이지
             </button>
 
             <button type="button" style={btnGhost} onClick={() => nav(-1)}>
@@ -1504,7 +1501,6 @@ export default function StudentDetailPage() {
         <div style={sectionTitle}>강의 링크 선택</div>
 
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
-          {/* 과정: 드롭다운 */}
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
             <div style={{ fontSize: 12, color: COLORS.sub, fontWeight: 1000 }}>과정</div>
 
