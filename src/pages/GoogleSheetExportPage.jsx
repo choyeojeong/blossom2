@@ -16,9 +16,17 @@ const COLORS = {
   white: "#ffffff",
   blue: "#2f6fed",
   blueSoft: "rgba(47,111,237,0.10)",
-  greenSoft: "rgba(26,143,91,0.12)",
   border: "#d9e3f7",
 };
+
+function monthRange(yyyyMm) {
+  const start = dayjs(`${yyyyMm}-01`).startOf("month");
+  const end = start.endOf("month");
+  return {
+    start: start.format("YYYY-MM-DD"),
+    end: end.format("YYYY-MM-DD"),
+  };
+}
 
 function formatDateLabel(isoDate) {
   const d = dayjs(isoDate);
@@ -46,21 +54,38 @@ function buildGroupedCell(date, texts) {
   return `${dateLabel}\n${lines.join("\n")}`;
 }
 
-function monthRange(yyyyMm) {
-  const start = dayjs(`${yyyyMm}-01`).startOf("month");
-  const end = start.endOf("month");
-  return {
-    start: start.format("YYYY-MM-DD"),
-    end: end.format("YYYY-MM-DD"),
-  };
-}
-
 function sortByNameKo(a, b) {
   return String(a?.name || "").localeCompare(String(b?.name || ""), "ko");
 }
 
 function toDisplayModeLabel(mode) {
   return mode === "reading" ? "독해" : "일대일";
+}
+
+function isOtoEvent(row) {
+  if (!row) return false;
+  if (row.kind === "oto_class") return true;
+  if (
+    row.kind === "extra" &&
+    row.event_kind === "makeup" &&
+    row.schedule_kind === "oto"
+  ) {
+    return true;
+  }
+  return false;
+}
+
+function isReadingEvent(row) {
+  if (!row) return false;
+  if (row.kind === "reading") return true;
+  if (
+    row.kind === "extra" &&
+    row.event_kind === "makeup" &&
+    row.schedule_kind === "reading"
+  ) {
+    return true;
+  }
+  return false;
 }
 
 export default function GoogleSheetExportPage() {
@@ -82,11 +107,14 @@ export default function GoogleSheetExportPage() {
   useEffect(() => {
     setRows([]);
     setCopiedName("");
+    setErr("");
+    setMsg("");
   }, [month, teacher, mode]);
 
   async function loadTeachers() {
     try {
       setErr("");
+
       const { data, error } = await supabase
         .from("students")
         .select("teacher_name, withdrawal_date");
@@ -161,7 +189,30 @@ export default function GoogleSheetExportPage() {
   }
 
   async function loadOtoRows({ aliveStudents, studentIdSet, start, end }) {
-    const { data: todos, error } = await supabase
+    const { data: otoEvents, error: eventError } = await supabase
+      .from("student_events")
+      .select("student_id, event_date, kind, event_kind, schedule_kind, start_time")
+      .gte("event_date", start)
+      .lte("event_date", end)
+      .order("event_date", { ascending: true })
+      .order("start_time", { ascending: true });
+
+    if (eventError) throw eventError;
+
+    const otoDateMap = {};
+    for (const row of otoEvents || []) {
+      if (!studentIdSet.has(row.student_id)) continue;
+      if (!isOtoEvent(row)) continue;
+
+      const sid = row.student_id;
+      const date = row.event_date;
+      if (!sid || !date) continue;
+
+      if (!otoDateMap[sid]) otoDateMap[sid] = new Set();
+      otoDateMap[sid].add(date);
+    }
+
+    const { data: todos, error: todoError } = await supabase
       .from("student_todos")
       .select("id, student_id, todo_date, text, order_index, created_at")
       .gte("todo_date", start)
@@ -170,11 +221,15 @@ export default function GoogleSheetExportPage() {
       .order("order_index", { ascending: true })
       .order("created_at", { ascending: true });
 
-    if (error) throw error;
+    if (todoError) throw todoError;
 
     const grouped = {};
     for (const row of todos || []) {
       if (!studentIdSet.has(row.student_id)) continue;
+
+      const allowedDates = otoDateMap[row.student_id];
+      if (!allowedDates || !allowedDates.has(row.todo_date)) continue;
+
       const sid = row.student_id;
       const date = row.todo_date;
       if (!sid || !date) continue;
@@ -185,12 +240,14 @@ export default function GoogleSheetExportPage() {
     }
 
     const result = aliveStudents.map((student) => {
-      const dateMap = grouped[student.id] || {};
-      const dates = Object.keys(dateMap).sort((a, b) => a.localeCompare(b));
+      const dates = Array.from(otoDateMap[student.id] || []).sort((a, b) =>
+        a.localeCompare(b)
+      );
 
-      const cells = dates
-        .slice(0, 5)
-        .map((date) => buildGroupedCell(date, dateMap[date]));
+      const cells = dates.slice(0, 5).map((date) => {
+        const texts = grouped[student.id]?.[date] || [];
+        return buildGroupedCell(date, texts);
+      });
 
       return {
         studentId: student.id,
@@ -215,24 +272,15 @@ export default function GoogleSheetExportPage() {
 
     if (error) throw error;
 
-    const filtered = (events || []).filter((e) => {
-      if (!studentIdSet.has(e.student_id)) return false;
-      if (e.kind === "reading") return true;
-      if (
-        e.kind === "extra" &&
-        e.event_kind === "makeup" &&
-        e.schedule_kind === "reading"
-      ) {
-        return true;
-      }
-      return false;
-    });
-
     const grouped = {};
-    for (const row of filtered) {
+    for (const row of events || []) {
+      if (!studentIdSet.has(row.student_id)) continue;
+      if (!isReadingEvent(row)) continue;
+
       const sid = row.student_id;
       const date = row.event_date;
       const memo = String(row.memo || "").trim();
+
       if (!sid || !date) continue;
 
       if (!grouped[sid]) grouped[sid] = {};
@@ -259,12 +307,9 @@ export default function GoogleSheetExportPage() {
     setRows(result);
   }
 
+  // ✅ 이름 제외: 회차 내용 1~5칸만 가로로 복사
   function buildStudentCopyText(row) {
-    const line = [
-      row.name || "",
-      ...Array.from({ length: 5 }, (_, i) => row.cells?.[i] || ""),
-    ];
-    return line.join("\t");
+    return Array.from({ length: 5 }, (_, i) => row.cells?.[i] || "").join("\t");
   }
 
   async function copyStudent(row) {
@@ -272,8 +317,8 @@ export default function GoogleSheetExportPage() {
       const text = buildStudentCopyText(row);
       await navigator.clipboard.writeText(text);
       setCopiedName(row.name || "");
-      setMsg("");
       setErr("");
+      setMsg("");
       setTimeout(() => setCopiedName(""), 1800);
     } catch (e) {
       setErr(e?.message || "복사 실패");
@@ -359,11 +404,7 @@ export default function GoogleSheetExportPage() {
               borderColor: err ? "rgba(214,69,93,0.22)" : COLORS.border,
             }}
           >
-            {err
-              ? err
-              : copiedName
-              ? `${copiedName} 복사 완료!`
-              : msg}
+            {err ? err : copiedName ? `${copiedName} 복사 완료!` : msg}
           </div>
         )}
 
@@ -388,9 +429,7 @@ export default function GoogleSheetExportPage() {
                   <td style={styles.tdName}>{row.name}</td>
                   {Array.from({ length: 5 }, (_, idx) => (
                     <td key={idx} style={styles.tdCell}>
-                      <div style={styles.cellText}>
-                        {row.cells?.[idx] || ""}
-                      </div>
+                      <div style={styles.cellText}>{row.cells?.[idx] || ""}</div>
                     </td>
                   ))}
                   <td style={styles.tdAction}>
@@ -417,8 +456,8 @@ export default function GoogleSheetExportPage() {
         </div>
 
         <div style={styles.help}>
-          구글시트에 붙여넣을 때는 각 학생 행의 <b>복사</b> 버튼을 눌러서
-          원하는 줄에 붙여넣으면 됩니다.
+          학생 이름 칸은 복사되지 않고, <b>1회차~5회차 내용만 가로로 복사</b>됩니다.
+          구글시트에서 첫 회차 칸에 커서를 두고 붙여넣으면 됩니다.
         </div>
       </div>
     </div>
