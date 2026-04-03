@@ -51,7 +51,7 @@ function buildGroupedCell(date, texts) {
   const lines = uniqStrings(texts);
   if (!dateLabel && !lines.length) return "";
   if (!lines.length) return dateLabel;
-  return `${dateLabel}\n${lines.join("\n")}`;
+  return [dateLabel, ...lines].join(" · ");
 }
 
 function sortByNameKo(a, b) {
