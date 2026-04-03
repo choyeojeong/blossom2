@@ -126,6 +126,52 @@ function rowBg(r) {
   return "transparent";
 }
 
+
+function formatMessageDateTime(dateStr, timeStr) {
+  const d = String(dateStr || "").trim();
+  const t = toHHMM(timeStr);
+  if (!d) return t || "";
+
+  const dt = parseISODate(d);
+  const weekday = ["일", "월", "화", "수", "목", "금", "토"][dt.getDay()];
+  const mm = dt.getMonth() + 1;
+  const dd = dt.getDate();
+  return `${mm}/${dd}(${weekday})${t ? ` ${t}` : ""}`;
+}
+
+function buildAbsentMessage({ studentName, reason, classLabel, makeupDate, makeupTime }) {
+  const safeName = String(studentName || "").trim() || "[학생명]";
+  const safeReason = String(reason || "").trim() || "[결석사유]";
+  const safeClassLabel = String(classLabel || "").trim() || "[수업유형]";
+  const makeupText = formatMessageDateTime(makeupDate, makeupTime);
+
+  const lines = [
+    "안녕하세요, 블라썸에듀 영어학원입니다.",
+    `${safeName} 학생 오늘 ${safeReason}으로 인해 ${safeClassLabel}수업 결석 연락 받았습니다.`,
+  ];
+
+  if (makeupText) {
+    lines.push(`보강은 ${makeupText}에 진행될 예정입니다.`);
+  }
+
+  lines.push(
+    "",
+    "",
+    "{블라썸에듀 결석 및 보강 규칙}",
+    "본원에서는 선생님의 원활한 수업준비 및 학생들의 약속 준수를 장려하기 위해 아래와 같은 규칙을 적용하고 있습니다.",
+    "1. 원칙적으로 당일 결석은 보강이 불가능합니다.",
+    "단, 예외적으로 당일에 조율하기 어렵다고 판단되는 사유(예. 병결, 경조사)에 대해서는 보강을 제공합니다.",
+    "2. 보강에 대한 재보강은 어떠한 사유로도 불가능합니다.",
+    "**아이가 제시간을 지키고 사전에 보강을 조율할 수 있도록 가정에서도 많은 응원과 지도 부탁드립니다.",
+    "",
+    "",
+    "감사합니다.",
+    "산본 블라썸에듀) 031-393-0582"
+  );
+
+  return lines.join("\n");
+}
+
 function buildSummary(r, linkedMakeupClassTime) {
   if (!r) return null;
 
@@ -199,6 +245,8 @@ export default function OneToOneSchedulePage() {
   });
 
   const [originalMap, setOriginalMap] = useState({});
+  const [messageOpenId, setMessageOpenId] = useState(null);
+  const [copiedMessageId, setCopiedMessageId] = useState(null);
 
   const fixedSlots = useMemo(() => {
     const dow = parseISODate(selectedDate).getDay();
@@ -850,6 +898,48 @@ export default function OneToOneSchedulePage() {
     }
   }
 
+
+
+  function getMessageTextForEvent(e) {
+    if (!e) return "";
+
+    const linkedMakeupClassTime = e.makeup_event_id
+      ? makeupClassTimeById.get(e.makeup_event_id) || ""
+      : "";
+
+    const makeupDate = e.makeup_date || "";
+    const makeupTime =
+      (e.makeup_class_time || "").trim() ||
+      linkedMakeupClassTime ||
+      toHHMM(e.start_time);
+
+    return buildAbsentMessage({
+      studentName: e.students?.name || "",
+      reason: e.absent_reason || "",
+      classLabel: e.kind === "extra" && e.event_kind === "makeup" ? "일대일 보강 " : "일대일 ",
+      makeupDate,
+      makeupTime: makeupDate ? makeupTime : "",
+    });
+  }
+
+  function toggleMessageBox(e) {
+    setCopiedMessageId((prev) => (prev === e.id ? null : prev));
+    setMessageOpenId((prev) => (prev === e.id ? null : e.id));
+  }
+
+  async function copyMessageText(e) {
+    try {
+      const text = getMessageTextForEvent(e);
+      await navigator.clipboard.writeText(text);
+      setCopiedMessageId(e.id);
+      window.setTimeout(() => {
+        setCopiedMessageId((prev) => (prev === e.id ? null : prev));
+      }, 1600);
+    } catch (err) {
+      setErr(err?.message || String(err));
+    }
+  }
+
   const slotRows = useMemo(() => {
     return fixedSlots.map((slotStart) => {
       const slotEnd = addMinutes(slotStart, CLASS_MINUTES);
@@ -1235,6 +1325,78 @@ export default function OneToOneSchedulePage() {
                                   }}
                                 >
                                   {originLine}
+                                </div>
+                              ) : null}
+
+                              {e.attendance_status === "absent" ? (
+                                <div
+                                  style={{
+                                    marginTop: 8,
+                                    width: "100%",
+                                    display: "flex",
+                                    flexDirection: "column",
+                                    gap: 6,
+                                    alignItems: "center",
+                                  }}
+                                >
+                                  <div
+                                    style={{
+                                      display: "flex",
+                                      gap: 8,
+                                      flexWrap: "wrap",
+                                      justifyContent: "center",
+                                    }}
+                                  >
+                                    <button
+                                      type="button"
+                                      style={btnPrimary}
+                                      onClick={() => toggleMessageBox(e)}
+                                    >
+                                      {messageOpenId === e.id ? "메시지 닫기" : "메시지 생성"}
+                                    </button>
+
+                                    {messageOpenId === e.id ? (
+                                      <button
+                                        type="button"
+                                        style={btnGhost}
+                                        onClick={() => copyMessageText(e)}
+                                      >
+                                        복사하기
+                                      </button>
+                                    ) : null}
+                                  </div>
+
+                                  {copiedMessageId === e.id ? (
+                                    <div
+                                      style={{
+                                        fontSize: 12,
+                                        color: COLORS.sub,
+                                        fontWeight: 900,
+                                      }}
+                                    >
+                                      복사완료
+                                    </div>
+                                  ) : null}
+
+                                  {messageOpenId === e.id ? (
+                                    <textarea
+                                      readOnly
+                                      value={getMessageTextForEvent(e)}
+                                      rows={9}
+                                      style={{
+                                        width: "100%",
+                                        resize: "vertical",
+                                        padding: "10px 10px",
+                                        borderRadius: 12,
+                                        border: `1px solid ${COLORS.line}`,
+                                        background: COLORS.white,
+                                        color: COLORS.text,
+                                        fontWeight: 800,
+                                        fontSize: 12,
+                                        lineHeight: 1.45,
+                                      }}
+                                    />
+                                  ) : null}
                                 </div>
                               ) : null}
                             </div>

@@ -121,6 +121,51 @@ function seasonForDate(d) {
   return "term";
 }
 
+
+function formatMessageDateTime(dateStr, timeStr) {
+  const d = String(dateStr || "").trim();
+  const t = hhmm(timeStr);
+  if (!d) return t || "";
+
+  const x = dayjs(d);
+  if (!x.isValid()) return [d, t].filter(Boolean).join(" ");
+
+  return `${x.format("M/D(dd)")} ${t}`.trim();
+}
+
+function buildAbsentMessage({ studentName, reason, classLabel, makeupDate, makeupTime }) {
+  const safeName = String(studentName || "").trim() || "[학생명]";
+  const safeReason = String(reason || "").trim() || "[결석사유]";
+  const safeClassLabel = String(classLabel || "").trim() || "[수업유형]";
+  const makeupText = formatMessageDateTime(makeupDate, makeupTime);
+
+  const lines = [
+    "안녕하세요, 블라썸에듀 영어학원입니다.",
+    `${safeName} 학생 오늘 ${safeReason}으로 인해 ${safeClassLabel}수업 결석 연락 받았습니다.`,
+  ];
+
+  if (makeupText) {
+    lines.push(`보강은 ${makeupText}에 진행될 예정입니다.`);
+  }
+
+  lines.push(
+    "",
+    "",
+    "{블라썸에듀 결석 및 보강 규칙}",
+    "본원에서는 선생님의 원활한 수업준비 및 학생들의 약속 준수를 장려하기 위해 아래와 같은 규칙을 적용하고 있습니다.",
+    "1. 원칙적으로 당일 결석은 보강이 불가능합니다.",
+    "단, 예외적으로 당일에 조율하기 어렵다고 판단되는 사유(예. 병결, 경조사)에 대해서는 보강을 제공합니다.",
+    "2. 보강에 대한 재보강은 어떠한 사유로도 불가능합니다.",
+    "**아이가 제시간을 지키고 사전에 보강을 조율할 수 있도록 가정에서도 많은 응원과 지도 부탁드립니다.",
+    "",
+    "",
+    "감사합니다.",
+    "산본 블라썸에듀) 031-393-0582"
+  );
+
+  return lines.join("\n");
+}
+
 export default function ReadingSchedulePage() {
   const [date, setDate] = useState(() => dayjs().format("YYYY-MM-DD"));
   const [loading, setLoading] = useState(false);
@@ -147,6 +192,8 @@ export default function ReadingSchedulePage() {
   const [addDate, setAddDate] = useState(() => dayjs().format("YYYY-MM-DD"));
   const [addTime, setAddTime] = useState("");
   const [adding, setAdding] = useState(false);
+  const [messageOpenId, setMessageOpenId] = useState(null);
+  const [copiedMessageId, setCopiedMessageId] = useState(null);
 
   useEffect(() => {
     if (absentOpen) setTimeout(() => firstInputRef.current?.focus?.(), 0);
@@ -521,6 +568,28 @@ export default function ReadingSchedulePage() {
           <div style={styles.attnLine2}>{line2}</div>
           {/* ✅✅✅ 보강이면 원결석일/사유 표시 */}
           {originLine ? <div style={styles.attnLine3}>{originLine}</div> : null}
+
+          <div style={styles.messageBtnRow}>
+            <button type="button" onClick={() => toggleMessageBox(r.id)} style={styles.btnPresent}>
+              {messageOpenId === r.id ? "메시지 닫기" : "메시지 생성"}
+            </button>
+            {messageOpenId === r.id ? (
+              <button type="button" onClick={() => copyMessageText(r)} style={styles.ghostBtn}>
+                복사하기
+              </button>
+            ) : null}
+          </div>
+
+          {copiedMessageId === r.id ? <div style={styles.copyDone}>복사완료</div> : null}
+
+          {messageOpenId === r.id ? (
+            <textarea
+              readOnly
+              value={getMessageTextForRow(r)}
+              rows={9}
+              style={styles.messagePreview}
+            />
+          ) : null}
         </div>
       );
     }
@@ -541,6 +610,37 @@ export default function ReadingSchedulePage() {
         {originLine ? <div style={styles.attnLine3}>{originLine}</div> : null}
       </div>
     );
+  }
+
+
+
+  function getMessageTextForRow(r) {
+    if (!r) return "";
+
+    return buildAbsentMessage({
+      studentName: r.student_name || "",
+      reason: r.absent_reason || "",
+      classLabel: isMakeupRow(r) ? "독해 보강 " : "독해 ",
+      makeupDate: r.kind === "reading" ? r.makeup_date || "" : "",
+      makeupTime: r.kind === "reading" ? r.makeup_class_time || "" : "",
+    });
+  }
+
+  function toggleMessageBox(rowId) {
+    setCopiedMessageId((prev) => (prev === rowId ? null : prev));
+    setMessageOpenId((prev) => (prev === rowId ? null : rowId));
+  }
+
+  async function copyMessageText(r) {
+    try {
+      await navigator.clipboard.writeText(getMessageTextForRow(r));
+      setCopiedMessageId(r.id);
+      window.setTimeout(() => {
+        setCopiedMessageId((prev) => (prev === r.id ? null : prev));
+      }, 1600);
+    } catch (e) {
+      setErr(e?.message || String(e));
+    }
   }
 
   async function findStudentIdByName(nameRaw) {
@@ -1120,6 +1220,35 @@ const styles = {
     minHeight: 16,
   },
   // ✅✅✅ 추가 라인(원결석 정보)
+
+  messageBtnRow: {
+    marginTop: 8,
+    display: "flex",
+    justifyContent: "center",
+    gap: 8,
+    flexWrap: "wrap",
+  },
+  copyDone: {
+    marginTop: 4,
+    fontSize: 12,
+    color: COLORS.sub,
+    fontWeight: 900,
+    textAlign: "center",
+  },
+  messagePreview: {
+    width: "100%",
+    marginTop: 8,
+    resize: "vertical",
+    padding: "10px 10px",
+    borderRadius: 12,
+    border: `1px solid ${COLORS.border}`,
+    background: "#fff",
+    color: COLORS.text,
+    fontWeight: 800,
+    fontSize: 12,
+    lineHeight: "18px",
+    outline: "none",
+  },
   attnLine3: {
     width: "100%",
     textAlign: "center",
