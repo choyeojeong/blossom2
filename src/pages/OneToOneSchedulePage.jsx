@@ -126,7 +126,6 @@ function rowBg(r) {
   return "transparent";
 }
 
-
 function formatMessageDateTime(dateStr, timeStr) {
   const d = String(dateStr || "").trim();
   const t = toHHMM(timeStr);
@@ -898,8 +897,6 @@ export default function OneToOneSchedulePage() {
     }
   }
 
-
-
   function getMessageTextForEvent(e) {
     if (!e) return "";
 
@@ -908,7 +905,10 @@ export default function OneToOneSchedulePage() {
       : "";
 
     const makeupDate = e.makeup_date || "";
+
+    // ✅ 메시지 안내 시간은 수업시간이 아니라 테스트시간 기준으로 우선 안내
     const makeupTime =
+      (e.makeup_time || "").trim() ||
       (e.makeup_class_time || "").trim() ||
       linkedMakeupClassTime ||
       toHHMM(e.start_time);
