@@ -435,6 +435,7 @@ export default function ReadingSchedulePage() {
           .eq("kind", "extra")
           .eq("event_kind", "makeup")
           .eq("start_time", targetStartTime)
+          .eq("schedule_kind", "reading")
           .maybeSingle();
 
         if (dupErr) throw dupErr;

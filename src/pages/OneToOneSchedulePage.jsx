@@ -559,6 +559,7 @@ export default function OneToOneSchedulePage() {
           .eq("kind", "extra")
           .eq("event_kind", "makeup")
           .eq("start_time", targetStartTime)
+          .eq("schedule_kind", "oto")
           .maybeSingle();
 
         if (dupErr) throw dupErr;
