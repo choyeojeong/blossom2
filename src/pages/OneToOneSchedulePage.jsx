@@ -1,3 +1,4 @@
+// src/pages/OneToOneSchedulePage.jsx
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { supabase } from "../utils/supabaseClient";
@@ -169,48 +170,6 @@ function buildAbsentMessage({ studentName, reason, classLabel, makeupDate, makeu
   );
 
   return lines.join("\n");
-}
-
-function buildSummary(r, linkedMakeupClassTime) {
-  if (!r) return null;
-
-  if (r.attendance_status === "present") {
-    const lateRaw = r.late_minutes;
-    const hasLate = lateRaw !== null && lateRaw !== undefined;
-
-    const late = hasLate ? Number(lateRaw) : null;
-    const label =
-      !hasLate || !Number.isFinite(late)
-        ? "출석(지각분 미기록)"
-        : late <= 0
-        ? "정시 출석"
-        : `${late}분 지각`;
-
-    const at = r.attended_at ? hhmmFromISO(r.attended_at) : "";
-    return { title: "출석", detail: `${label}${at ? ` · 체크 ${at}` : ""}` };
-  }
-
-  if (r.attendance_status === "absent") {
-    const parts = [];
-    if (r.absent_reason) parts.push(`사유: ${r.absent_reason}`);
-
-    const md = r.makeup_date || null;
-    const mt = (r.makeup_time || "").trim();
-    const mc = (r.makeup_class_time || linkedMakeupClassTime || "").trim();
-    if (md && (mt || mc)) {
-      const t = mt ? `테스트 ${mt}` : "";
-      const c = mc ? `수업 ${mc}` : "";
-      const mix = [t, c].filter(Boolean).join(" / ");
-      parts.push(`보강: ${md}${mix ? ` (${mix})` : ""}`);
-    }
-
-    return {
-      title: "결석",
-      detail: parts.length ? parts.join(" · ") : "결석(상세 없음)",
-    };
-  }
-
-  return null;
 }
 
 export default function OneToOneSchedulePage() {
@@ -572,11 +531,13 @@ export default function OneToOneSchedulePage() {
       }
 
       if (wantsMakeup) {
+        const targetStartTime = `${makeupClassTime}:00`;
+
         const payload = {
           student_id: e.student_id,
           event_date: makeupDate,
           kind: "extra",
-          start_time: `${makeupClassTime}:00`,
+          start_time: targetStartTime,
           season: e.season,
           event_kind: "makeup",
           schedule_kind: "oto",
@@ -590,30 +551,91 @@ export default function OneToOneSchedulePage() {
           makeup_class_time: null,
         };
 
+        const { data: dup, error: dupErr } = await supabase
+          .from("student_events")
+          .select("id, original_event_id")
+          .eq("student_id", e.student_id)
+          .eq("event_date", makeupDate)
+          .eq("kind", "extra")
+          .eq("event_kind", "makeup")
+          .eq("start_time", targetStartTime)
+          .maybeSingle();
+
+        if (dupErr) throw dupErr;
+
+        if (dup && dup.original_event_id && dup.original_event_id !== e.id) {
+          throw new Error("같은 날짜/시간에 이미 다른 결석과 연결된 보강이 있어요.");
+        }
+
         if (existingMakeupId) {
-          const { error: muErr } = await supabase
-            .from("student_events")
-            .update(payload)
-            .eq("id", existingMakeupId);
-          if (muErr) throw muErr;
+          if (dup && dup.id !== existingMakeupId) {
+            const { error: delOldErr } = await supabase
+              .from("student_events")
+              .delete()
+              .eq("id", existingMakeupId);
+            if (delOldErr) throw delOldErr;
 
-          await supabase
-            .from("student_events")
-            .update({ makeup_event_id: existingMakeupId })
-            .eq("id", e.id);
+            const { error: reuseErr } = await supabase
+              .from("student_events")
+              .update(payload)
+              .eq("id", dup.id);
+            if (reuseErr) throw reuseErr;
+
+            const { error: linkErr } = await supabase
+              .from("student_events")
+              .update({ makeup_event_id: dup.id })
+              .eq("id", e.id);
+            if (linkErr) throw linkErr;
+          } else if (dup && dup.id === existingMakeupId) {
+            const { error: muErr } = await supabase
+              .from("student_events")
+              .update(payload)
+              .eq("id", existingMakeupId);
+            if (muErr) throw muErr;
+
+            await supabase
+              .from("student_events")
+              .update({ makeup_event_id: existingMakeupId })
+              .eq("id", e.id);
+          } else {
+            const { error: muErr } = await supabase
+              .from("student_events")
+              .update(payload)
+              .eq("id", existingMakeupId);
+            if (muErr) throw muErr;
+
+            await supabase
+              .from("student_events")
+              .update({ makeup_event_id: existingMakeupId })
+              .eq("id", e.id);
+          }
         } else {
-          const { data: inserted, error: insErr } = await supabase
-            .from("student_events")
-            .insert(payload)
-            .select("id")
-            .single();
-          if (insErr) throw insErr;
+          if (dup) {
+            const { error: reuseErr } = await supabase
+              .from("student_events")
+              .update(payload)
+              .eq("id", dup.id);
+            if (reuseErr) throw reuseErr;
 
-          const { error: linkErr } = await supabase
-            .from("student_events")
-            .update({ makeup_event_id: inserted.id })
-            .eq("id", e.id);
-          if (linkErr) throw linkErr;
+            const { error: linkErr } = await supabase
+              .from("student_events")
+              .update({ makeup_event_id: dup.id })
+              .eq("id", e.id);
+            if (linkErr) throw linkErr;
+          } else {
+            const { data: inserted, error: insErr } = await supabase
+              .from("student_events")
+              .insert(payload)
+              .select("id")
+              .single();
+            if (insErr) throw insErr;
+
+            const { error: linkErr } = await supabase
+              .from("student_events")
+              .update({ makeup_event_id: inserted.id })
+              .eq("id", e.id);
+            if (linkErr) throw linkErr;
+          }
         }
       } else {
         if (existingMakeupId) {
@@ -860,11 +882,29 @@ export default function OneToOneSchedulePage() {
 
     setSavingId("manualMakeup");
     try {
+      const targetStartTime = `${makeupClassTime}:00`;
+
+      const { data: dup, error: dupErr } = await supabase
+        .from("student_events")
+        .select("id")
+        .eq("student_id", studentId)
+        .eq("event_date", makeupDate)
+        .eq("kind", "extra")
+        .eq("event_kind", "makeup")
+        .eq("start_time", targetStartTime)
+        .maybeSingle();
+
+      if (dupErr) throw dupErr;
+
+      if (dup) {
+        throw new Error("이미 같은 날짜/시간의 보강이 등록되어 있어요.");
+      }
+
       const payload = {
         student_id: studentId,
         event_date: makeupDate,
         kind: "extra",
-        start_time: `${makeupClassTime}:00`,
+        start_time: targetStartTime,
         season: seasonForDate(makeupDate),
         event_kind: "makeup",
         schedule_kind: "oto",
@@ -906,7 +946,6 @@ export default function OneToOneSchedulePage() {
 
     const makeupDate = e.makeup_date || "";
 
-    // ✅ 메시지 안내 시간은 수업시간이 아니라 테스트시간 기준으로 우선 안내
     const makeupTime =
       (e.makeup_time || "").trim() ||
       (e.makeup_class_time || "").trim() ||
@@ -1776,4 +1815,46 @@ export default function OneToOneSchedulePage() {
       </div>
     </div>
   );
+}
+
+function buildSummary(r, linkedMakeupClassTime) {
+  if (!r) return null;
+
+  if (r.attendance_status === "present") {
+    const lateRaw = r.late_minutes;
+    const hasLate = lateRaw !== null && lateRaw !== undefined;
+
+    const late = hasLate ? Number(lateRaw) : null;
+    const label =
+      !hasLate || !Number.isFinite(late)
+        ? "출석(지각분 미기록)"
+        : late <= 0
+        ? "정시 출석"
+        : `${late}분 지각`;
+
+    const at = r.attended_at ? hhmmFromISO(r.attended_at) : "";
+    return { title: "출석", detail: `${label}${at ? ` · 체크 ${at}` : ""}` };
+  }
+
+  if (r.attendance_status === "absent") {
+    const parts = [];
+    if (r.absent_reason) parts.push(`사유: ${r.absent_reason}`);
+
+    const md = r.makeup_date || null;
+    const mt = (r.makeup_time || "").trim();
+    const mc = (r.makeup_class_time || linkedMakeupClassTime || "").trim();
+    if (md && (mt || mc)) {
+      const t = mt ? `테스트 ${mt}` : "";
+      const c = mc ? `수업 ${mc}` : "";
+      const mix = [t, c].filter(Boolean).join(" / ");
+      parts.push(`보강: ${md}${mix ? ` (${mix})` : ""}`);
+    }
+
+    return {
+      title: "결석",
+      detail: parts.length ? parts.join(" · ") : "결석(상세 없음)",
+    };
+  }
+
+  return null;
 }

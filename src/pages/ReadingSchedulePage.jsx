@@ -19,7 +19,6 @@ const COLORS = {
   absentBg: "rgba(224,49,49,0.08)",
   absentBd: "rgba(224,49,49,0.30)",
 
-  // 보강 기본(출결 전)
   makeupBg: "rgba(250, 176, 5, 0.18)",
   makeupBd: "rgba(250, 176, 5, 0.40)",
 
@@ -73,7 +72,6 @@ function presentWindow(attendedAtIso) {
   return `${a.format("HH:mm")}-${b.format("HH:mm")}`;
 }
 
-// ✅ 날짜(YYYY-MM-DD) + 시간(HH:MM) -> 로컬 Date 생성
 function makeLocalDateTime(dateStr, timeStrHHMM) {
   const d = String(dateStr || "").trim();
   const t = hhmm(timeStrHHMM);
@@ -88,7 +86,6 @@ function makeLocalDateTime(dateStr, timeStrHHMM) {
   return Number.isNaN(dt.getTime()) ? null : dt;
 }
 
-// ✅ attended_at(실제 체크) 기준으로 지각분 계산 (타임존/파싱 안전)
 function calcLateFromAttendedAt(eventDate, startTime, attendedAtIso) {
   const scheduled = makeLocalDateTime(eventDate, startTime);
   const attended = attendedAtIso ? new Date(attendedAtIso) : null;
@@ -98,7 +95,6 @@ function calcLateFromAttendedAt(eventDate, startTime, attendedAtIso) {
   return Math.max(0, diffMin);
 }
 
-// ✅ “지금 클릭한 순간” 기준으로 지각분 계산 (저장용)
 function calcLateFromNow(eventDate, startTime) {
   const scheduled = makeLocalDateTime(eventDate, startTime);
   if (!scheduled) return 0;
@@ -107,7 +103,6 @@ function calcLateFromNow(eventDate, startTime) {
   return Math.max(0, diffMin);
 }
 
-// ✅ 보강 추가시 season 자동 추정(현재 프로젝트 규칙)
 function seasonForDate(d) {
   const s = (d || "").trim();
   if (!s) return "term";
@@ -120,7 +115,6 @@ function seasonForDate(d) {
   }
   return "term";
 }
-
 
 function formatMessageDateTime(dateStr, timeStr) {
   const d = String(dateStr || "").trim();
@@ -172,14 +166,11 @@ export default function ReadingSchedulePage() {
   const [err, setErr] = useState("");
   const [rows, setRows] = useState([]);
 
-  // ✅✅✅ 보강 수업의 "원결석일/결석사유" 표시용 맵
-  const [originalMap, setOriginalMap] = useState({}); // { [original_event_id]: { id, event_date, absent_reason } }
+  const [originalMap, setOriginalMap] = useState({});
 
-  // 메모 drafts / saving
   const [memoDraftById, setMemoDraftById] = useState({});
   const [memoSavingId, setMemoSavingId] = useState(null);
 
-  // 결석/보강 모달
   const [absentOpen, setAbsentOpen] = useState(false);
   const [target, setTarget] = useState(null);
   const [absentReason, setAbsentReason] = useState("");
@@ -187,7 +178,6 @@ export default function ReadingSchedulePage() {
   const [makeupClassTime, setMakeupClassTime] = useState("");
   const firstInputRef = useRef(null);
 
-  // ✅ 하단 “보강 추가” 폼
   const [addName, setAddName] = useState("");
   const [addDate, setAddDate] = useState(() => dayjs().format("YYYY-MM-DD"));
   const [addTime, setAddTime] = useState("");
@@ -208,7 +198,6 @@ export default function ReadingSchedulePage() {
     return r.kind === "extra" && (r.event_kind || "") === "makeup";
   }
 
-  // 보강은 출결 전엔 연노랑 / 출결 처리되면 present/absent가 우선
   function rowTone(r) {
     if (r.attendance_status === "present") return { bg: COLORS.presentBg, bd: COLORS.presentBd };
     if (r.attendance_status === "absent") return { bg: COLORS.absentBg, bd: COLORS.absentBd };
@@ -221,7 +210,6 @@ export default function ReadingSchedulePage() {
       setErr("");
       setLoading(true);
 
-      // ✅ 독해 화면에서는 reading + (makeup extra 중 schedule_kind='reading')만 보여야 함
       const { data, error } = await supabase
         .from("student_events")
         .select(
@@ -273,7 +261,6 @@ export default function ReadingSchedulePage() {
         start_hhmm: hhmm(r.start_time),
       }));
 
-      // 시간순 → 같은 시간이면 이름순
       normalized.sort((a, b) => {
         const ta = makeLocalDateTime(a.event_date, a.start_time)?.getTime() ?? 9e18;
         const tb = makeLocalDateTime(b.event_date, b.start_time)?.getTime() ?? 9e18;
@@ -283,7 +270,6 @@ export default function ReadingSchedulePage() {
 
       setRows(normalized);
 
-      // memoDraft 초기화(없으면 채움)
       setMemoDraftById((prev) => {
         const next = { ...prev };
         for (const r of normalized) {
@@ -292,7 +278,6 @@ export default function ReadingSchedulePage() {
         return next;
       });
 
-      // ✅✅✅ 보강(추가수업)의 원결석일/사유를 표시하기 위해 원이벤트들을 한 번 더 로드
       try {
         const originIds = Array.from(
           new Set(
@@ -319,7 +304,6 @@ export default function ReadingSchedulePage() {
           setOriginalMap(m);
         }
       } catch {
-        // 실패해도 시간표는 보이게
         setOriginalMap((prev) => prev || {});
       }
     } catch (e) {
@@ -339,11 +323,8 @@ export default function ReadingSchedulePage() {
       setErr("");
 
       const isMakeup = isMakeupRow(r);
-
-      // ✅ FIX: 날짜+시간 기준으로 정확히 late 계산
       const late = calcLateFromNow(r.event_date, r.start_time);
 
-      // ✅✅✅ FIX: 보강은 원결석 정보( original_event_id / makeup_class_time 등) 절대 건드리지 않음
       const payload = isMakeup
         ? {
             attendance_status: "present",
@@ -396,7 +377,6 @@ export default function ReadingSchedulePage() {
     try {
       setErr("");
 
-      // ✅ 결석은 attended_at을 남기지 않음
       const { error: upErr } = await supabase
         .from("student_events")
         .update({
@@ -411,17 +391,32 @@ export default function ReadingSchedulePage() {
 
       if (upErr) throw upErr;
 
-      // 2) 보강 생성은 원수업(kind=reading)에서만
       if (r.kind === "reading" && makeupDate && mct) {
         const dur = Number.isFinite(r.class_minutes) && r.class_minutes ? r.class_minutes : 60;
+        const targetStartTime = `${mct}:00`;
+
+        let existingMakeupId = r.makeup_event_id || null;
+
+        if (!existingMakeupId) {
+          const { data: ex, error: exErr } = await supabase
+            .from("student_events")
+            .select("id")
+            .eq("original_event_id", r.id)
+            .eq("kind", "extra")
+            .eq("event_kind", "makeup")
+            .eq("schedule_kind", "reading")
+            .maybeSingle();
+          if (exErr) throw exErr;
+          existingMakeupId = ex?.id || null;
+        }
 
         const insertPayload = {
           student_id: r.student_id,
           event_date: makeupDate,
           kind: "extra",
-          start_time: `${mct}:00`,
+          start_time: targetStartTime,
           season: r.season,
-          schedule_kind: "reading", // ✅ 강제
+          schedule_kind: "reading",
           attendance_status: null,
           attended_at: null,
           late_minutes: null,
@@ -432,11 +427,94 @@ export default function ReadingSchedulePage() {
           makeup_class_time: mct,
         };
 
-        const { data: insData, error: insErr } = await supabase.from("student_events").insert(insertPayload).select("id").single();
-        if (insErr) throw insErr;
+        const { data: dup, error: dupErr } = await supabase
+          .from("student_events")
+          .select("id, original_event_id")
+          .eq("student_id", r.student_id)
+          .eq("event_date", makeupDate)
+          .eq("kind", "extra")
+          .eq("event_kind", "makeup")
+          .eq("start_time", targetStartTime)
+          .maybeSingle();
 
-        const { error: linkErr } = await supabase.from("student_events").update({ makeup_event_id: insData?.id || null }).eq("id", r.id);
-        if (linkErr) throw linkErr;
+        if (dupErr) throw dupErr;
+
+        if (dup && dup.original_event_id && dup.original_event_id !== r.id) {
+          throw new Error("같은 날짜/시간에 이미 다른 결석과 연결된 보강이 있어요.");
+        }
+
+        if (existingMakeupId) {
+          if (dup && dup.id !== existingMakeupId) {
+            const { error: delOldErr } = await supabase
+              .from("student_events")
+              .delete()
+              .eq("id", existingMakeupId);
+            if (delOldErr) throw delOldErr;
+
+            const { error: reuseErr } = await supabase
+              .from("student_events")
+              .update(insertPayload)
+              .eq("id", dup.id);
+            if (reuseErr) throw reuseErr;
+
+            const { error: linkErr } = await supabase
+              .from("student_events")
+              .update({ makeup_event_id: dup.id })
+              .eq("id", r.id);
+            if (linkErr) throw linkErr;
+          } else if (dup && dup.id === existingMakeupId) {
+            const { error: upMuErr } = await supabase
+              .from("student_events")
+              .update(insertPayload)
+              .eq("id", existingMakeupId);
+            if (upMuErr) throw upMuErr;
+
+            const { error: linkErr } = await supabase
+              .from("student_events")
+              .update({ makeup_event_id: existingMakeupId })
+              .eq("id", r.id);
+            if (linkErr) throw linkErr;
+          } else {
+            const { error: upMuErr } = await supabase
+              .from("student_events")
+              .update(insertPayload)
+              .eq("id", existingMakeupId);
+            if (upMuErr) throw upMuErr;
+
+            const { error: linkErr } = await supabase
+              .from("student_events")
+              .update({ makeup_event_id: existingMakeupId })
+              .eq("id", r.id);
+            if (linkErr) throw linkErr;
+          }
+        } else {
+          if (dup) {
+            const { error: reuseErr } = await supabase
+              .from("student_events")
+              .update(insertPayload)
+              .eq("id", dup.id);
+            if (reuseErr) throw reuseErr;
+
+            const { error: linkErr } = await supabase
+              .from("student_events")
+              .update({ makeup_event_id: dup.id })
+              .eq("id", r.id);
+            if (linkErr) throw linkErr;
+          } else {
+            const { data: insData, error: insErr } = await supabase
+              .from("student_events")
+              .insert(insertPayload)
+              .select("id")
+              .single();
+            if (insErr) throw insErr;
+
+            const { error: linkErr } = await supabase
+              .from("student_events")
+              .update({ makeup_event_id: insData?.id || null })
+              .eq("id", r.id);
+            if (linkErr) throw linkErr;
+          }
+        }
       }
 
       setAbsentOpen(false);
@@ -515,10 +593,9 @@ export default function ReadingSchedulePage() {
     el.style.height = `${Math.min(el.scrollHeight, 120)}px`;
   }
 
-  // ✅✅✅ 보강 수업에서 원결석 정보 한 줄 만들어주기
   function getMakeupOriginLine(r) {
     if (!isMakeupRow(r)) return "";
-    if (!r.original_event_id) return ""; // 수동 보강이면 없음
+    if (!r.original_event_id) return "";
 
     const origin = originalMap[String(r.original_event_id)] || null;
     if (!origin) return "원결석: (정보 로딩 실패)";
@@ -550,7 +627,6 @@ export default function ReadingSchedulePage() {
         <div style={styles.attnBox}>
           <div style={styles.attnLine1}>{win || "출석"}</div>
           <div style={styles.attnLine2}>{lateText}</div>
-          {/* ✅✅✅ 보강이면 원결석일/사유 표시 */}
           {originLine ? <div style={styles.attnLine3}>{originLine}</div> : null}
         </div>
       );
@@ -566,7 +642,6 @@ export default function ReadingSchedulePage() {
         <div style={styles.attnBox}>
           <div style={styles.attnLine1}>{line1}</div>
           <div style={styles.attnLine2}>{line2}</div>
-          {/* ✅✅✅ 보강이면 원결석일/사유 표시 */}
           {originLine ? <div style={styles.attnLine3}>{originLine}</div> : null}
 
           <div style={styles.messageBtnRow}>
@@ -594,7 +669,6 @@ export default function ReadingSchedulePage() {
       );
     }
 
-    // 미처리(출석/결석 버튼) 상태에서도 보강이면 원결석 표시
     const originLine = getMakeupOriginLine(r);
 
     return (
@@ -611,8 +685,6 @@ export default function ReadingSchedulePage() {
       </div>
     );
   }
-
-
 
   function getMessageTextForRow(r) {
     if (!r) return "";
@@ -690,13 +762,31 @@ export default function ReadingSchedulePage() {
         return;
       }
 
+      const targetStartTime = `${t}:00`;
+
+      const { data: dup, error: dupErr } = await supabase
+        .from("student_events")
+        .select("id")
+        .eq("student_id", found.id)
+        .eq("event_date", d)
+        .eq("kind", "extra")
+        .eq("event_kind", "makeup")
+        .eq("start_time", targetStartTime)
+        .maybeSingle();
+
+      if (dupErr) throw dupErr;
+
+      if (dup) {
+        throw new Error("이미 같은 날짜/시간의 보강이 등록되어 있어요.");
+      }
+
       const payload = {
         student_id: found.id,
         event_date: d,
         kind: "extra",
         event_kind: "makeup",
         schedule_kind: "reading",
-        start_time: `${t}:00`,
+        start_time: targetStartTime,
         season: seasonForDate(d),
         attendance_status: null,
         attended_at: null,
@@ -872,7 +962,6 @@ export default function ReadingSchedulePage() {
           )}
         </div>
 
-        {/* ✅ 하단: 보강 추가 폼 */}
         <div style={styles.addBox}>
           <div style={styles.addTitle}>보강 추가</div>
           <div style={{ marginTop: 6, color: COLORS.sub, fontSize: 12, lineHeight: 1.45, fontWeight: 800 }}>
@@ -1219,7 +1308,6 @@ const styles = {
     lineHeight: "16px",
     minHeight: 16,
   },
-  // ✅✅✅ 추가 라인(원결석 정보)
 
   messageBtnRow: {
     marginTop: 8,
