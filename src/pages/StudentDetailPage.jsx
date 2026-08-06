@@ -506,7 +506,7 @@ export default function StudentDetailPage() {
 
     const { data, error } = await supabase
       .from("student_events")
-      .select("id, event_date, kind, event_kind, attendance_status, original_event_id")
+      .select("id, event_date, kind, event_kind, schedule_kind, attendance_status, original_event_id, memo")
       .eq("student_id", studentId)
       .gte("event_date", fromIso)
       .lte("event_date", toIso);
@@ -538,9 +538,10 @@ export default function StudentDetailPage() {
       const d = r.event_date;
       if (!d) continue;
 
-      if (!map[d]) map[d] = { normalKinds: new Set(), makeupTypes: new Set(), makeup: [], normal: [] };
+      if (!map[d]) map[d] = { normalKinds: new Set(), makeupTypes: new Set(), makeup: [], normal: [], readingMemos: [] };
 
       const k = normalizeKind(r);
+      const memo = String(r?.memo || "").trim();
 
       if (k === "makeup") {
         map[d].makeup.push(r);
@@ -549,9 +550,18 @@ export default function StudentDetailPage() {
         if (mt === "oto") map[d].makeupTypes.add("makeup_oto");
         else if (mt === "reading") map[d].makeupTypes.add("makeup_reading");
         else map[d].makeupTypes.add("makeup");
+
+        const scheduleKind = String(r?.schedule_kind || "").toLowerCase();
+        if (memo && (mt === "reading" || scheduleKind === "reading")) {
+          map[d].readingMemos.push(memo);
+        }
       } else {
         map[d].normal.push(r);
         map[d].normalKinds.add(k);
+
+        if (memo && k === "reading") {
+          map[d].readingMemos.push(memo);
+        }
       }
     }
 
@@ -575,7 +585,9 @@ export default function StudentDetailPage() {
       for (const nk of bucket.normalKinds || []) kinds.add(nk);
       for (const mk of bucket.makeupTypes || []) kinds.add(mk);
 
-      out[d] = { kinds, status };
+      const readingMemo = Array.from(new Set(bucket.readingMemos || [])).join("\n");
+
+      out[d] = { kinds, status, readingMemo };
     }
 
     setEventsByDate(out);
@@ -1663,6 +1675,43 @@ export default function StudentDetailPage() {
                         >
                           단어시험 등록
                         </button>
+
+                        {meta.readingMemo ? (
+                          <div
+                            style={{
+                              marginTop: 2,
+                              padding: "9px 10px",
+                              borderRadius: 12,
+                              border: "1px solid rgba(31,111,235,0.18)",
+                              background: "rgba(90,167,255,0.10)",
+                              minWidth: 0,
+                            }}
+                          >
+                            <div
+                              style={{
+                                marginBottom: 5,
+                                fontSize: 11,
+                                fontWeight: 1000,
+                                color: COLORS.blue,
+                              }}
+                            >
+                              독해T 메모
+                            </div>
+                            <div
+                              style={{
+                                fontSize: 12,
+                                lineHeight: 1.45,
+                                fontWeight: 800,
+                                color: COLORS.text,
+                                whiteSpace: "pre-wrap",
+                                overflowWrap: "anywhere",
+                                wordBreak: "break-word",
+                              }}
+                            >
+                              {meta.readingMemo}
+                            </div>
+                          </div>
+                        ) : null}
                       </div>
                     </div>
                   );
