@@ -160,6 +160,18 @@ function buildAbsentMessage({ studentName, reason, classLabel, makeupDate, makeu
   return lines.join("\n");
 }
 
+function isWordTestTodo(text) {
+  const parts = String(text || "")
+    .split(",")
+    .map((part) => part.trim());
+  if (parts.length !== 5) return false;
+  const questionOk = /^(\d+)\s*문제$/.test(parts[2]);
+  const cutoffOk = /^-?(\d+)\s*컷$/.test(parts[3]);
+  const allowedKinds = new Set(["뜻", "스펠링", "파포"]);
+  const kinds = parts[4].split("/").map((x) => x.trim()).filter(Boolean);
+  return Boolean(parts[0] && parts[1] && questionOk && cutoffOk && kinds.length && kinds.every((x) => allowedKinds.has(x)));
+}
+
 export default function ReadingSchedulePage() {
   const [date, setDate] = useState(() => dayjs().format("YYYY-MM-DD"));
   const [loading, setLoading] = useState(false);
@@ -184,6 +196,13 @@ export default function ReadingSchedulePage() {
   const [adding, setAdding] = useState(false);
   const [messageOpenId, setMessageOpenId] = useState(null);
   const [copiedMessageId, setCopiedMessageId] = useState(null);
+
+  const [otoTodoOpen, setOtoTodoOpen] = useState(false);
+  const [otoTodoTarget, setOtoTodoTarget] = useState(null);
+  const [otoTodoDate, setOtoTodoDate] = useState("");
+  const [otoTodos, setOtoTodos] = useState([]);
+  const [otoTodoLoading, setOtoTodoLoading] = useState(false);
+  const [otoTodoErr, setOtoTodoErr] = useState("");
 
   useEffect(() => {
     if (absentOpen) setTimeout(() => firstInputRef.current?.focus?.(), 0);
@@ -716,6 +735,143 @@ export default function ReadingSchedulePage() {
     }
   }
 
+  function closeOtoTodoModal() {
+    setOtoTodoOpen(false);
+    setOtoTodoTarget(null);
+    setOtoTodoDate("");
+    setOtoTodos([]);
+    setOtoTodoErr("");
+  }
+
+  async function openOtoTodoModal(r) {
+    if (!r?.student_id) return;
+
+    setOtoTodoOpen(true);
+    setOtoTodoTarget(r);
+    setOtoTodoDate("");
+    setOtoTodos([]);
+    setOtoTodoErr("");
+    setOtoTodoLoading(true);
+
+    try {
+      const upperDate = r.event_date || date;
+      const otoKinds = ["oto", "oto_class", "one_to_one"];
+
+      const [
+        { data: kindRows, error: kindErr },
+        { data: eventKindRows, error: eventKindErr },
+        { data: makeupRows, error: makeupErr },
+      ] = await Promise.all([
+        supabase
+          .from("student_events")
+          .select("id,event_date,kind,event_kind,schedule_kind,original_event_id")
+          .eq("student_id", r.student_id)
+          .lte("event_date", upperDate)
+          .in("kind", otoKinds)
+          .order("event_date", { ascending: false })
+          .limit(20),
+        supabase
+          .from("student_events")
+          .select("id,event_date,kind,event_kind,schedule_kind,original_event_id")
+          .eq("student_id", r.student_id)
+          .lte("event_date", upperDate)
+          .in("event_kind", otoKinds)
+          .order("event_date", { ascending: false })
+          .limit(20),
+        supabase
+          .from("student_events")
+          .select("id,event_date,kind,event_kind,schedule_kind,original_event_id")
+          .eq("student_id", r.student_id)
+          .lte("event_date", upperDate)
+          .eq("event_kind", "makeup")
+          .order("event_date", { ascending: false })
+          .limit(50),
+      ]);
+
+      if (kindErr) throw kindErr;
+      if (eventKindErr) throw eventKindErr;
+      if (makeupErr) throw makeupErr;
+
+      const possibleMakeups = makeupRows || [];
+      const originIds = Array.from(
+        new Set(possibleMakeups.map((item) => item?.original_event_id).filter(Boolean).map(String))
+      );
+
+      let otoOriginIdSet = new Set();
+
+      if (originIds.length) {
+        const { data: originRows, error: originErr } = await supabase
+          .from("student_events")
+          .select("id,kind,event_kind,schedule_kind")
+          .in("id", originIds);
+
+        if (originErr) throw originErr;
+
+        otoOriginIdSet = new Set(
+          (originRows || [])
+            .filter((item) => {
+              const kind = String(item?.kind || "").toLowerCase();
+              const eventKind = String(item?.event_kind || "").toLowerCase();
+              const scheduleKind = String(item?.schedule_kind || "").toLowerCase();
+              return otoKinds.includes(kind) || otoKinds.includes(eventKind) || otoKinds.includes(scheduleKind);
+            })
+            .map((item) => String(item.id))
+        );
+      }
+
+      const otoMakeupRows = possibleMakeups.filter((item) => {
+        const scheduleKind = String(item?.schedule_kind || "").toLowerCase();
+        const kind = String(item?.kind || "").toLowerCase();
+        const eventKind = String(item?.event_kind || "").toLowerCase();
+        const originalId = item?.original_event_id ? String(item.original_event_id) : "";
+
+        return (
+          otoKinds.includes(scheduleKind) ||
+          eventKind.includes("oto") ||
+          eventKind.includes("one_to_one") ||
+          kind === "makeup_oto" ||
+          otoOriginIdSet.has(originalId)
+        );
+      });
+
+      const eventMap = new Map();
+      for (const item of [...(kindRows || []), ...(eventKindRows || []), ...otoMakeupRows]) {
+        if (!item?.id || !item?.event_date) continue;
+        eventMap.set(String(item.id), item);
+      }
+
+      const latestEvent = Array.from(eventMap.values()).sort((a, b) => {
+        const dateDiff = String(b.event_date).localeCompare(String(a.event_date));
+        if (dateDiff !== 0) return dateDiff;
+        return String(b.id).localeCompare(String(a.id));
+      })[0];
+
+      if (!latestEvent?.event_date) {
+        setOtoTodoErr("최근 일대일 수업 또는 일대일 보강일을 찾지 못했어요.");
+        return;
+      }
+
+      const latestDate = latestEvent.event_date;
+      setOtoTodoDate(latestDate);
+
+      const { data: todoRows, error: todoErr } = await supabase
+        .from("student_todos")
+        .select("id,todo_date,text,order_index,created_at")
+        .eq("student_id", r.student_id)
+        .eq("todo_date", latestDate)
+        .order("order_index", { ascending: true })
+        .order("created_at", { ascending: true });
+
+      if (todoErr) throw todoErr;
+
+      setOtoTodos((todoRows || []).filter((todo) => !isWordTestTodo(todo.text)));
+    } catch (e) {
+      setOtoTodoErr(e?.message || String(e));
+    } finally {
+      setOtoTodoLoading(false);
+    }
+  }
+
   async function findStudentIdByName(nameRaw) {
     const name = (nameRaw || "").trim();
     if (!name) return { id: null, pickedName: "" };
@@ -948,7 +1104,12 @@ export default function ReadingSchedulePage() {
                         }}
                         disabled={saving}
                       />
-                      <div style={styles.memoHint}>{saving ? "저장 중…" : ""}</div>
+                      <div style={styles.memoBottomRow}>
+                        <div style={styles.memoHint}>{saving ? "저장 중…" : ""}</div>
+                        <button type="button" onClick={() => openOtoTodoModal(r)} style={styles.otoBtn}>
+                          일대일
+                        </button>
+                      </div>
                     </div>
                   </div>
 
@@ -998,6 +1159,48 @@ export default function ReadingSchedulePage() {
           </div>
         </div>
       </div>
+
+      {otoTodoOpen ? (
+        <div
+          role="dialog"
+          aria-modal="true"
+          onMouseDown={closeOtoTodoModal}
+          style={styles.modalOverlay}
+        >
+          <div onMouseDown={(e) => e.stopPropagation()} style={styles.otoModal}>
+            <div style={styles.modalHead}>
+              <div style={{ minWidth: 0 }}>
+                <div style={styles.otoModalTitle}>{otoTodoTarget?.student_name || "-"} · 최근 일대일 할일</div>
+                <div style={styles.otoModalDate}>
+                  {otoTodoDate ? dayjs(otoTodoDate).format("YYYY.MM.DD (ddd)") : "최근 수업일 확인 중"}
+                </div>
+              </div>
+              <button type="button" onClick={closeOtoTodoModal} style={styles.closeXBtn} aria-label="닫기">
+                ×
+              </button>
+            </div>
+
+            <div style={styles.otoTodoBody}>
+              {otoTodoLoading ? (
+                <div style={styles.otoEmpty}>불러오는 중…</div>
+              ) : otoTodoErr ? (
+                <div style={styles.otoError}>{otoTodoErr}</div>
+              ) : otoTodos.length === 0 ? (
+                <div style={styles.otoEmpty}>등록된 일반 할일이 없어요.</div>
+              ) : (
+                <div style={styles.otoTodoList}>
+                  {otoTodos.map((todo, idx) => (
+                    <div key={todo.id} style={styles.otoTodoItem}>
+                      <span style={styles.otoTodoNumber}>{idx + 1}</span>
+                      <span style={styles.otoTodoText}>{todo.text}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {absentOpen ? (
         <div
@@ -1376,6 +1579,96 @@ const styles = {
     fontWeight: 800,
     textAlign: "center",
   },
+
+  memoBottomRow: {
+    minHeight: 22,
+    marginTop: 4,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 6,
+  },
+  otoBtn: {
+    height: 24,
+    padding: "0 9px",
+    borderRadius: 999,
+    border: `1px solid ${COLORS.presentBtnBd}`,
+    background: COLORS.presentBtnBg,
+    color: COLORS.text,
+    fontSize: 11,
+    fontWeight: 900,
+    cursor: "pointer",
+    whiteSpace: "nowrap",
+    flex: "0 0 auto",
+  },
+  otoModal: {
+    width: "min(480px, calc(100vw - 32px))",
+    maxHeight: "min(560px, calc(100vh - 32px))",
+    overflow: "hidden",
+    borderRadius: 18,
+    background: "#fff",
+    border: `1px solid ${COLORS.border}`,
+    padding: 16,
+    boxShadow: "0 24px 70px rgba(31,42,68,0.24)",
+  },
+  otoModalTitle: {
+    fontSize: 16,
+    fontWeight: 900,
+    color: COLORS.text,
+    whiteSpace: "nowrap",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+  },
+  otoModalDate: { marginTop: 4, color: COLORS.sub, fontSize: 12, fontWeight: 800 },
+  closeXBtn: {
+    width: 32,
+    height: 32,
+    flex: "0 0 auto",
+    borderRadius: 10,
+    border: `1px solid ${COLORS.border}`,
+    background: "#fff",
+    color: COLORS.text,
+    fontSize: 20,
+    lineHeight: 1,
+    fontWeight: 900,
+    cursor: "pointer",
+  },
+  otoTodoBody: { marginTop: 14, maxHeight: "min(440px, calc(100vh - 130px))", overflowY: "auto", overflowX: "hidden" },
+  otoTodoList: { display: "grid", gap: 8, minWidth: 0 },
+  otoTodoItem: {
+    display: "grid",
+    gridTemplateColumns: "24px minmax(0, 1fr)",
+    alignItems: "start",
+    gap: 8,
+    padding: "9px 10px",
+    borderRadius: 12,
+    border: `1px solid ${COLORS.border}`,
+    background: "#f8faff",
+    minWidth: 0,
+  },
+  otoTodoNumber: {
+    width: 22,
+    height: 22,
+    borderRadius: 999,
+    display: "grid",
+    placeItems: "center",
+    background: COLORS.presentBtnBg,
+    color: COLORS.text,
+    fontSize: 11,
+    fontWeight: 900,
+  },
+  otoTodoText: {
+    minWidth: 0,
+    color: COLORS.text,
+    fontSize: 13,
+    lineHeight: 1.5,
+    fontWeight: 800,
+    whiteSpace: "pre-wrap",
+    overflowWrap: "anywhere",
+    wordBreak: "break-word",
+  },
+  otoEmpty: { padding: "18px 6px", textAlign: "center", color: COLORS.sub, fontSize: 13, fontWeight: 800 },
+  otoError: { padding: "12px", borderRadius: 12, background: COLORS.dangerBg, color: "#b42318", fontSize: 13, fontWeight: 800, overflowWrap: "anywhere" },
 
   empty: {
     padding: 14,
