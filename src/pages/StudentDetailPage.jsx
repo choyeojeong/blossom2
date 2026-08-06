@@ -28,6 +28,16 @@ const COLORS = {
 const WEEKDAYS_KO = ["일", "월", "화", "수", "목", "금", "토"];
 const WEEKDAYS_MON_SAT = [1, 2, 3, 4, 5, 6];
 
+const WORD_TEST_BOOK_OPTIONS = [
+  "어휘끝중학필수",
+  "어휘끝중학고난도",
+  "워마고등베이직",
+  "능률어원",
+  "워마수능2000",
+  "워마고등컴플릿",
+  "어휘끝수능1800",
+];
+
 function iso(d) {
   return dayjs(d).format("YYYY-MM-DD");
 }
@@ -213,6 +223,9 @@ export default function StudentDetailPage() {
     kinds: { meaning: true, spelling: false, parts: true },
   });
   const [wordTestSaving, setWordTestSaving] = useState(false);
+  const [wordTestModalPosition, setWordTestModalPosition] = useState({ x: 0, y: 0 });
+  const wordTestModalBoxRef = useRef(null);
+  const wordTestModalDragRef = useRef(null);
 
   const dragRef = useRef(null);
 
@@ -786,12 +799,60 @@ export default function StudentDetailPage() {
       cutoff: "3",
       kinds: { meaning: true, spelling: false, parts: true },
     });
+    setWordTestModalPosition({ x: 0, y: 0 });
     setWordTestModal({ dateIso });
   }
 
   function closeWordTestModal() {
     if (wordTestSaving) return;
+    wordTestModalDragRef.current = null;
     setWordTestModal(null);
+    setWordTestModalPosition({ x: 0, y: 0 });
+  }
+
+  function startWordTestModalDrag(e) {
+    if (e.button !== undefined && e.button !== 0) return;
+    if (e.target.closest("button, input, select, textarea, label")) return;
+
+    const box = wordTestModalBoxRef.current;
+    if (!box) return;
+
+    e.preventDefault();
+    e.currentTarget.setPointerCapture?.(e.pointerId);
+
+    wordTestModalDragRef.current = {
+      pointerId: e.pointerId,
+      startClientX: e.clientX,
+      startClientY: e.clientY,
+      startX: wordTestModalPosition.x,
+      startY: wordTestModalPosition.y,
+      width: box.offsetWidth,
+      height: box.offsetHeight,
+    };
+  }
+
+  function moveWordTestModal(e) {
+    const drag = wordTestModalDragRef.current;
+    if (!drag || drag.pointerId !== e.pointerId) return;
+
+    const nextX = drag.startX + (e.clientX - drag.startClientX);
+    const nextY = drag.startY + (e.clientY - drag.startClientY);
+
+    const margin = 12;
+    const maxX = Math.max(0, (window.innerWidth - drag.width) / 2 - margin);
+    const maxY = Math.max(0, (window.innerHeight - drag.height) / 2 - margin);
+
+    setWordTestModalPosition({
+      x: Math.max(-maxX, Math.min(maxX, nextX)),
+      y: Math.max(-maxY, Math.min(maxY, nextY)),
+    });
+  }
+
+  function endWordTestModalDrag(e) {
+    const drag = wordTestModalDragRef.current;
+    if (!drag || drag.pointerId !== e.pointerId) return;
+    e.currentTarget.releasePointerCapture?.(e.pointerId);
+    wordTestModalDragRef.current = null;
   }
 
   function toggleWordTestKind(key) {
@@ -1776,16 +1837,39 @@ export default function StudentDetailPage() {
           }}
         >
           <div
+            ref={wordTestModalBoxRef}
             style={{
               width: "min(520px, 100%)",
+              maxHeight: "calc(100vh - 32px)",
+              overflowY: "auto",
               borderRadius: 20,
               border: `1px solid ${COLORS.line}`,
               background: "#fff",
               boxShadow: "0 24px 70px rgba(0,0,0,0.24)",
               padding: 20,
+              transform: `translate3d(${wordTestModalPosition.x}px, ${wordTestModalPosition.y}px, 0)`,
+              transition: wordTestModalDragRef.current ? "none" : "transform 80ms ease-out",
             }}
           >
-            <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
+            <div
+              onPointerDown={startWordTestModalDrag}
+              onPointerMove={moveWordTestModal}
+              onPointerUp={endWordTestModalDrag}
+              onPointerCancel={endWordTestModalDrag}
+              style={{
+                display: "flex",
+                alignItems: "flex-start",
+                justifyContent: "space-between",
+                gap: 12,
+                margin: "-8px -8px 0",
+                padding: "8px 8px 10px",
+                borderRadius: 14,
+                cursor: "grab",
+                touchAction: "none",
+                userSelect: "none",
+              }}
+              title="이 부분을 끌어서 창을 이동할 수 있습니다."
+            >
               <div>
                 <div style={{ fontSize: 21, fontWeight: 1000 }}>단어시험 등록</div>
                 <div style={{ marginTop: 5, color: COLORS.sub, fontSize: 13 }}>
@@ -1803,16 +1887,38 @@ export default function StudentDetailPage() {
             </div>
 
             <div style={{ display: "grid", gap: 13, marginTop: 18 }}>
-              <label style={{ display: "grid", gap: 6 }}>
+              <div style={{ display: "grid", gap: 6 }}>
                 <span style={{ fontSize: 12, color: COLORS.sub, fontWeight: 1000 }}>단어책</span>
                 <input
                   value={wordTestForm.book}
                   onChange={(e) => setWordTestForm((prev) => ({ ...prev, book: e.target.value }))}
-                  placeholder="예: 워마고등베이직"
+                  placeholder="직접 입력하거나 아래 목록에서 선택"
                   style={{ ...tinyInput, width: "100%" }}
                   autoFocus
                 />
-              </label>
+                <select
+                  value={WORD_TEST_BOOK_OPTIONS.includes(wordTestForm.book) ? wordTestForm.book : ""}
+                  onChange={(e) => {
+                    if (!e.target.value) return;
+                    setWordTestForm((prev) => ({ ...prev, book: e.target.value }));
+                  }}
+                  style={{
+                    ...tinyInput,
+                    width: "100%",
+                    color: WORD_TEST_BOOK_OPTIONS.includes(wordTestForm.book) ? COLORS.text : COLORS.sub,
+                    background: "rgba(31,42,68,0.035)",
+                    cursor: "pointer",
+                  }}
+                  aria-label="단어책 목록에서 선택"
+                >
+                  <option value="">책 목록에서 선택</option>
+                  {WORD_TEST_BOOK_OPTIONS.map((bookName) => (
+                    <option key={bookName} value={bookName}>
+                      {bookName}
+                    </option>
+                  ))}
+                </select>
+              </div>
 
               <label style={{ display: "grid", gap: 6 }}>
                 <span style={{ fontSize: 12, color: COLORS.sub, fontWeight: 1000 }}>범위</span>
