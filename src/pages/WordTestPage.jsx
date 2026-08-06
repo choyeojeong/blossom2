@@ -62,6 +62,14 @@ export default function WordTestPage() {
   const [busyId, setBusyId] = useState("");
   const [err, setErr] = useState("");
 
+  const [studentQuery, setStudentQuery] = useState("");
+  const [historyStart, setHistoryStart] = useState(dayjs().subtract(1, "month").format("YYYY-MM-DD"));
+  const [historyEnd, setHistoryEnd] = useState(dayjs().format("YYYY-MM-DD"));
+  const [historyRows, setHistoryRows] = useState([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historySearched, setHistorySearched] = useState(false);
+  const [historyErr, setHistoryErr] = useState("");
+
   useEffect(() => {
     loadWordTests();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -135,6 +143,86 @@ export default function WordTestPage() {
     }
   }
 
+  async function searchStudentHistory() {
+    const query = studentQuery.trim();
+    if (!query) {
+      alert("학생 이름을 입력해주세요.");
+      return;
+    }
+    if (!historyStart || !historyEnd) {
+      alert("조회 시작일과 종료일을 모두 선택해주세요.");
+      return;
+    }
+    if (dayjs(historyStart).isAfter(dayjs(historyEnd))) {
+      alert("시작일은 종료일보다 늦을 수 없습니다.");
+      return;
+    }
+
+    setHistoryLoading(true);
+    setHistoryErr("");
+    setHistorySearched(true);
+
+    try {
+      const { data: students, error: studentError } = await supabase
+        .from("students")
+        .select("id, name, school, grade, teacher_name")
+        .ilike("name", `%${query}%`)
+        .order("name", { ascending: true });
+
+      if (studentError) throw studentError;
+
+      const studentIds = (students || []).map((student) => student.id);
+      if (!studentIds.length) {
+        setHistoryRows([]);
+        return;
+      }
+
+      const { data: todoRows, error: todoError } = await supabase
+        .from("student_todos")
+        .select("id, student_id, todo_date, text, order_index, created_at")
+        .in("student_id", studentIds)
+        .gte("todo_date", historyStart)
+        .lte("todo_date", historyEnd)
+        .order("todo_date", { ascending: false })
+        .order("created_at", { ascending: false });
+
+      if (todoError) throw todoError;
+
+      const parsedTodos = (todoRows || [])
+        .map((todo) => ({ ...todo, wordTest: parseWordTest(todo.text) }))
+        .filter((todo) => todo.wordTest);
+
+      if (!parsedTodos.length) {
+        setHistoryRows([]);
+        return;
+      }
+
+      const todoIds = parsedTodos.map((todo) => todo.id);
+      const { data: results, error: resultError } = await supabase
+        .from("word_test_results")
+        .select("todo_id, result_status, wrong_count, updated_at")
+        .in("todo_id", todoIds);
+
+      if (resultError) throw resultError;
+
+      const studentMap = new Map((students || []).map((student) => [student.id, student]));
+      const resultMap = new Map((results || []).map((result) => [result.todo_id, result]));
+
+      const nextHistoryRows = parsedTodos.map((todo) => ({
+        ...todo,
+        student: studentMap.get(todo.student_id) || null,
+        result: resultMap.get(todo.id) || null,
+      }));
+
+      setHistoryRows(nextHistoryRows);
+    } catch (e) {
+      setHistoryRows([]);
+      setHistoryErr(e?.message || "학생 단어시험 기록을 불러오지 못했습니다.");
+    } finally {
+      setHistoryLoading(false);
+    }
+  }
+
   function setDraft(todoId, patch) {
     setDrafts((prev) => ({
       ...prev,
@@ -200,6 +288,89 @@ export default function WordTestPage() {
           </button>
         </div>
 
+        <div style={styles.searchCard}>
+          <div style={styles.searchTitle}>학생별 단어시험 기록 조회</div>
+          <div style={styles.searchControls}>
+            <input
+              type="text"
+              value={studentQuery}
+              onChange={(e) => setStudentQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") searchStudentHistory();
+              }}
+              placeholder="학생 이름 검색"
+              style={styles.nameInput}
+            />
+            <div style={styles.periodGroup}>
+              <input type="date" value={historyStart} onChange={(e) => setHistoryStart(e.target.value)} style={styles.periodInput} />
+              <span style={styles.periodDash}>~</span>
+              <input type="date" value={historyEnd} onChange={(e) => setHistoryEnd(e.target.value)} style={styles.periodInput} />
+            </div>
+            <button type="button" onClick={searchStudentHistory} disabled={historyLoading} style={styles.searchButton(historyLoading)}>
+              {historyLoading ? "조회 중…" : "기록 조회"}
+            </button>
+          </div>
+
+          {historyErr ? <div style={styles.error}>{historyErr}</div> : null}
+
+          {historySearched ? (
+            <div style={styles.historyBox}>
+              <div style={styles.historySummary}>
+                검색 결과 <strong>{historyRows.length}</strong>건
+              </div>
+              <table style={styles.historyTable}>
+                <colgroup>
+                  <col style={{ width: "11%" }} />
+                  <col style={{ width: "11%" }} />
+                  <col style={{ width: "15%" }} />
+                  <col style={{ width: "12%" }} />
+                  <col style={{ width: "9%" }} />
+                  <col style={{ width: "8%" }} />
+                  <col style={{ width: "8%" }} />
+                  <col style={{ width: "12%" }} />
+                  <col style={{ width: "14%" }} />
+                </colgroup>
+                <thead>
+                  <tr>
+                    {['시험일', '학생이름', '학교/학년', '단어책', '범위', '문제수', '커트라인', '시험종류', '결과'].map((label) => (
+                      <th key={label} style={styles.historyTh}>{label}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {historyLoading ? (
+                    <tr><td colSpan="9" style={styles.emptyCell}>불러오는 중…</td></tr>
+                  ) : historyRows.length === 0 ? (
+                    <tr><td colSpan="9" style={styles.emptyCell}>설정한 기간에 해당 학생의 단어시험 기록이 없습니다.</td></tr>
+                  ) : (
+                    historyRows.map((row) => (
+                      <tr key={`history-${row.id}`}>
+                        <td style={styles.historyTdCenter}>{dayjs(row.todo_date).format("YYYY.MM.DD")}</td>
+                        <td style={styles.historyTdStrong}>{row.student?.name || "-"}</td>
+                        <td style={styles.historyTd}>{row.student ? `${row.student.school || "-"} / ${row.student.grade || "-"}` : "-"}</td>
+                        <td style={styles.historyTd}>{row.wordTest.book}</td>
+                        <td style={styles.historyTdCenter}>{row.wordTest.range}</td>
+                        <td style={styles.historyTdCenter}>{row.wordTest.questionCount}</td>
+                        <td style={styles.historyTdCenter}>{row.wordTest.cutoff}컷</td>
+                        <td style={styles.historyTdCenter}>{row.wordTest.kinds}</td>
+                        <td style={styles.historyTdCenter}>
+                          {row.result ? (
+                            <span style={row.result.result_status === "pass" ? styles.passBadge : styles.failBadge}>
+                              {row.result.result_status === "pass" ? "통과" : "불통과"} -{row.result.wrong_count}
+                            </span>
+                          ) : (
+                            <span style={styles.pendingBadge}>미채점</span>
+                          )}
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          ) : null}
+        </div>
+
         <div style={styles.dateBar}>
           <div>
             <div style={styles.dateTitle}>{dateLabel}</div>
@@ -216,8 +387,19 @@ export default function WordTestPage() {
         {err ? <div style={styles.error}>{err}</div> : null}
 
         <div style={styles.tableCard}>
-          <div style={styles.scrollArea}>
+          <div style={styles.tableArea}>
             <table style={styles.table}>
+              <colgroup>
+                <col style={{ width: "8%" }} />
+                <col style={{ width: "11%" }} />
+                <col style={{ width: "9%" }} />
+                <col style={{ width: "12%" }} />
+                <col style={{ width: "8%" }} />
+                <col style={{ width: "7%" }} />
+                <col style={{ width: "7%" }} />
+                <col style={{ width: "10%" }} />
+                <col style={{ width: "28%" }} />
+              </colgroup>
               <thead>
                 <tr>
                   {["학생이름", "학교/학년", "담당선생님", "단어책", "범위", "시험개수", "커트라인", "뜻/스펠링/파포", "통과/불통과"].map((label) => (
@@ -240,45 +422,47 @@ export default function WordTestPage() {
                         <td style={styles.td}>{row.student ? `${row.student.school || "-"} / ${row.student.grade || "-"}` : "-"}</td>
                         <td style={styles.td}>{row.student?.teacher_name || "-"}</td>
                         <td style={styles.td}>{row.wordTest.book}</td>
-                        <td style={styles.td}>{row.wordTest.range}</td>
+                        <td style={styles.tdCenter}>{row.wordTest.range}</td>
                         <td style={styles.tdCenter}>{row.wordTest.questionCount}문제</td>
                         <td style={styles.tdCenter}>{row.wordTest.cutoff}컷</td>
                         <td style={styles.tdCenter}>{row.wordTest.kinds}</td>
                         <td style={styles.resultTd}>
-                          <div style={styles.statusRow}>
-                            <label style={draft.status === "pass" ? styles.passChoiceActive : styles.choice}>
-                              <input
-                                type="radio"
-                                name={`status-${row.id}`}
-                                checked={draft.status === "pass"}
-                                onChange={() => setDraft(row.id, { status: "pass" })}
-                              />
-                              통과
-                            </label>
-                            <label style={draft.status === "fail" ? styles.failChoiceActive : styles.choice}>
-                              <input
-                                type="radio"
-                                name={`status-${row.id}`}
-                                checked={draft.status === "fail"}
-                                onChange={() => setDraft(row.id, { status: "fail" })}
-                              />
-                              불통과
-                            </label>
-                          </div>
-                          <div style={styles.saveRow}>
-                            <div style={styles.minusInputWrap}>
-                              <span style={styles.minus}>-</span>
-                              <input
-                                inputMode="numeric"
-                                value={draft.wrongCount}
-                                onChange={(e) => setDraft(row.id, { wrongCount: e.target.value.replace(/[^0-9]/g, "") })}
-                                placeholder="2"
-                                style={styles.wrongInput}
-                              />
+                          <div style={styles.compactResultRow}>
+                            <div style={styles.statusRow}>
+                              <label style={draft.status === "pass" ? styles.passChoiceActive : styles.choice}>
+                                <input
+                                  type="radio"
+                                  name={`status-${row.id}`}
+                                  checked={draft.status === "pass"}
+                                  onChange={() => setDraft(row.id, { status: "pass" })}
+                                />
+                                통과
+                              </label>
+                              <label style={draft.status === "fail" ? styles.failChoiceActive : styles.choice}>
+                                <input
+                                  type="radio"
+                                  name={`status-${row.id}`}
+                                  checked={draft.status === "fail"}
+                                  onChange={() => setDraft(row.id, { status: "fail" })}
+                                />
+                                불통과
+                              </label>
                             </div>
-                            <button type="button" disabled={isBusy} onClick={() => saveResult(row)} style={styles.saveButton(isBusy)}>
-                              저장
-                            </button>
+                            <div style={styles.saveRow}>
+                              <div style={styles.minusInputWrap}>
+                                <span style={styles.minus}>-</span>
+                                <input
+                                  inputMode="numeric"
+                                  value={draft.wrongCount}
+                                  onChange={(e) => setDraft(row.id, { wrongCount: e.target.value.replace(/[^0-9]/g, "") })}
+                                  placeholder="2"
+                                  style={styles.wrongInput}
+                                />
+                              </div>
+                              <button type="button" disabled={isBusy} onClick={() => saveResult(row)} style={styles.saveButton(isBusy)}>
+                                저장
+                              </button>
+                            </div>
                           </div>
                           {row.result ? <div style={styles.savedText}>저장됨: {row.result.result_status === "pass" ? "통과" : "불통과"} -{row.result.wrong_count}</div> : null}
                         </td>
@@ -296,36 +480,55 @@ export default function WordTestPage() {
 }
 
 const styles = {
-  page: { minHeight: "100vh", background: `linear-gradient(180deg, ${COLORS.bgTop}, ${COLORS.bgBottom})`, color: COLORS.text, padding: "calc(env(safe-area-inset-top, 0px) + 58px) 16px 24px", fontFamily: 'ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans KR"' },
+  page: { minHeight: "100vh", background: `linear-gradient(180deg, ${COLORS.bgTop}, ${COLORS.bgBottom})`, color: COLORS.text, padding: "calc(env(safe-area-inset-top, 0px) + 58px) 12px 24px", fontFamily: 'ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans KR"' },
   wrap: { width: "min(1700px, 100%)", margin: "0 auto" },
   header: { display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 12, flexWrap: "wrap", marginBottom: 12 },
   title: { fontSize: 24, fontWeight: 1000 },
   desc: { marginTop: 6, color: COLORS.sub, fontSize: 13 },
-  refreshButton: { height: 38, padding: "0 14px", borderRadius: 999, border: `1px solid ${COLORS.line}`, background: "#fff", fontWeight: 900, cursor: "pointer" },
-  dateBar: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 14, flexWrap: "wrap", padding: "12px 14px", borderRadius: 16, border: `1px solid ${COLORS.lineSoft}`, background: "rgba(255,255,255,0.70)" },
+  refreshButton: { height: 36, padding: "0 13px", borderRadius: 999, border: `1px solid ${COLORS.line}`, background: "#fff", fontWeight: 900, cursor: "pointer" },
+  searchCard: { marginBottom: 12, padding: "12px 14px", borderRadius: 16, border: `1px solid ${COLORS.lineSoft}`, background: "rgba(255,255,255,0.78)" },
+  searchTitle: { marginBottom: 9, fontSize: 14, fontWeight: 1000 },
+  searchControls: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" },
+  nameInput: { flex: "1 1 220px", minWidth: 180, height: 38, padding: "0 11px", borderRadius: 10, border: `1px solid ${COLORS.line}`, background: "#fff", outline: 0, fontWeight: 800 },
+  periodGroup: { display: "flex", alignItems: "center", gap: 6, flex: "0 1 auto" },
+  periodInput: { height: 38, padding: "0 8px", borderRadius: 10, border: `1px solid ${COLORS.line}`, background: "#fff", fontWeight: 800 },
+  periodDash: { color: COLORS.sub, fontWeight: 900 },
+  searchButton: (disabled) => ({ height: 38, padding: "0 15px", borderRadius: 10, border: 0, background: COLORS.blue, color: "#fff", fontWeight: 1000, cursor: disabled ? "not-allowed" : "pointer", opacity: disabled ? 0.6 : 1 }),
+  historyBox: { marginTop: 12, borderRadius: 12, border: `1px solid ${COLORS.lineSoft}`, overflow: "hidden", background: "#fff" },
+  historySummary: { padding: "9px 10px", fontSize: 12, color: COLORS.sub, borderBottom: `1px solid ${COLORS.lineSoft}` },
+  historyTable: { width: "100%", borderCollapse: "collapse", tableLayout: "fixed" },
+  historyTh: { padding: "8px 5px", background: "rgba(31,42,68,0.045)", borderBottom: `1px solid ${COLORS.line}`, borderRight: `1px solid ${COLORS.lineSoft}`, fontSize: 10.5, fontWeight: 1000, textAlign: "center", lineHeight: 1.25, wordBreak: "keep-all" },
+  historyTd: { padding: "7px 5px", borderBottom: `1px solid ${COLORS.lineSoft}`, borderRight: `1px solid ${COLORS.lineSoft}`, fontSize: 11, textAlign: "left", lineHeight: 1.35, wordBreak: "break-word" },
+  historyTdStrong: { padding: "7px 5px", borderBottom: `1px solid ${COLORS.lineSoft}`, borderRight: `1px solid ${COLORS.lineSoft}`, fontSize: 11.5, fontWeight: 1000, textAlign: "center", wordBreak: "break-word" },
+  historyTdCenter: { padding: "7px 4px", borderBottom: `1px solid ${COLORS.lineSoft}`, borderRight: `1px solid ${COLORS.lineSoft}`, fontSize: 11, fontWeight: 800, textAlign: "center", wordBreak: "break-word" },
+  passBadge: { display: "inline-block", padding: "3px 6px", borderRadius: 999, background: COLORS.greenSoft, color: COLORS.green, fontSize: 10.5, fontWeight: 1000 },
+  failBadge: { display: "inline-block", padding: "3px 6px", borderRadius: 999, background: COLORS.redSoft, color: COLORS.red, fontSize: 10.5, fontWeight: 1000 },
+  pendingBadge: { display: "inline-block", padding: "3px 6px", borderRadius: 999, background: "rgba(93,107,130,0.10)", color: COLORS.sub, fontSize: 10.5, fontWeight: 900 },
+  dateBar: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 14, flexWrap: "wrap", padding: "11px 13px", borderRadius: 16, border: `1px solid ${COLORS.lineSoft}`, background: "rgba(255,255,255,0.70)" },
   dateTitle: { fontSize: 16, fontWeight: 1000 },
   dateSub: { marginTop: 4, fontSize: 12, color: COLORS.sub },
   dateControls: { display: "flex", alignItems: "center", gap: 8 },
-  dateInput: { height: 40, padding: "0 10px", borderRadius: 10, border: `1px solid ${COLORS.line}`, background: "#fff", fontWeight: 900 },
-  todayButton: { height: 40, padding: "0 12px", borderRadius: 10, border: `1px solid ${COLORS.line}`, background: "transparent", fontWeight: 900, cursor: "pointer" },
-  error: { marginTop: 10, color: COLORS.red, fontWeight: 800 },
-  tableCard: { marginTop: 14, borderRadius: 16, border: `1px solid ${COLORS.lineSoft}`, background: "rgba(255,255,255,0.82)", overflow: "hidden" },
-  scrollArea: { overflowX: "auto" },
-  table: { width: "100%", minWidth: 1380, borderCollapse: "collapse", tableLayout: "fixed" },
-  th: { padding: "12px 10px", background: "rgba(47,111,237,0.08)", borderBottom: `1px solid ${COLORS.line}`, borderRight: `1px solid ${COLORS.lineSoft}`, fontSize: 12, fontWeight: 1000, textAlign: "center", whiteSpace: "nowrap" },
-  td: { padding: "12px 10px", borderBottom: `1px solid ${COLORS.lineSoft}`, borderRight: `1px solid ${COLORS.lineSoft}`, fontSize: 13, textAlign: "left", wordBreak: "break-word" },
-  tdStrong: { padding: "12px 10px", borderBottom: `1px solid ${COLORS.lineSoft}`, borderRight: `1px solid ${COLORS.lineSoft}`, fontSize: 14, fontWeight: 1000, textAlign: "center" },
-  tdCenter: { padding: "12px 10px", borderBottom: `1px solid ${COLORS.lineSoft}`, borderRight: `1px solid ${COLORS.lineSoft}`, fontSize: 13, textAlign: "center", fontWeight: 800 },
-  resultTd: { padding: 10, width: 280, borderBottom: `1px solid ${COLORS.lineSoft}` },
-  emptyCell: { padding: 36, textAlign: "center", color: COLORS.sub, fontWeight: 800 },
-  statusRow: { display: "flex", gap: 7, alignItems: "center" },
-  choice: { flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 5, height: 34, borderRadius: 9, border: `1px solid ${COLORS.line}`, background: "#fff", fontSize: 12, fontWeight: 900, cursor: "pointer" },
-  passChoiceActive: { flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 5, height: 34, borderRadius: 9, border: `1px solid rgba(19,115,51,0.35)`, background: COLORS.greenSoft, color: COLORS.green, fontSize: 12, fontWeight: 1000, cursor: "pointer" },
-  failChoiceActive: { flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 5, height: 34, borderRadius: 9, border: `1px solid rgba(180,35,24,0.35)`, background: COLORS.redSoft, color: COLORS.red, fontSize: 12, fontWeight: 1000, cursor: "pointer" },
-  saveRow: { display: "flex", gap: 7, marginTop: 7 },
-  minusInputWrap: { flex: 1, height: 34, display: "flex", alignItems: "center", border: `1px solid ${COLORS.line}`, borderRadius: 9, background: "#fff", overflow: "hidden" },
-  minus: { paddingLeft: 10, fontWeight: 1000 },
-  wrongInput: { width: "100%", height: "100%", border: 0, outline: 0, padding: "0 8px 0 3px", fontWeight: 900, fontSize: 13 },
-  saveButton: (disabled) => ({ height: 34, padding: "0 13px", borderRadius: 9, border: `1px solid ${COLORS.line}`, background: COLORS.blueSoft, color: COLORS.text, fontWeight: 1000, cursor: disabled ? "not-allowed" : "pointer", opacity: disabled ? 0.55 : 1 }),
-  savedText: { marginTop: 6, fontSize: 11, color: COLORS.sub, fontWeight: 800, textAlign: "right" },
+  dateInput: { height: 38, padding: "0 9px", borderRadius: 10, border: `1px solid ${COLORS.line}`, background: "#fff", fontWeight: 900 },
+  todayButton: { height: 38, padding: "0 11px", borderRadius: 10, border: `1px solid ${COLORS.line}`, background: "transparent", fontWeight: 900, cursor: "pointer" },
+  error: { marginTop: 10, color: COLORS.red, fontWeight: 800, fontSize: 12 },
+  tableCard: { marginTop: 12, borderRadius: 16, border: `1px solid ${COLORS.lineSoft}`, background: "rgba(255,255,255,0.82)", overflow: "hidden" },
+  tableArea: { width: "100%", overflowX: "hidden" },
+  table: { width: "100%", borderCollapse: "collapse", tableLayout: "fixed" },
+  th: { padding: "9px 4px", background: "rgba(47,111,237,0.08)", borderBottom: `1px solid ${COLORS.line}`, borderRight: `1px solid ${COLORS.lineSoft}`, fontSize: 10.5, fontWeight: 1000, textAlign: "center", lineHeight: 1.25, whiteSpace: "normal", wordBreak: "keep-all" },
+  td: { padding: "8px 5px", borderBottom: `1px solid ${COLORS.lineSoft}`, borderRight: `1px solid ${COLORS.lineSoft}`, fontSize: 11, textAlign: "left", lineHeight: 1.35, wordBreak: "break-word" },
+  tdStrong: { padding: "8px 4px", borderBottom: `1px solid ${COLORS.lineSoft}`, borderRight: `1px solid ${COLORS.lineSoft}`, fontSize: 12, fontWeight: 1000, textAlign: "center", wordBreak: "break-word" },
+  tdCenter: { padding: "8px 3px", borderBottom: `1px solid ${COLORS.lineSoft}`, borderRight: `1px solid ${COLORS.lineSoft}`, fontSize: 10.8, textAlign: "center", fontWeight: 800, lineHeight: 1.3, wordBreak: "break-word" },
+  resultTd: { padding: "7px 6px", borderBottom: `1px solid ${COLORS.lineSoft}` },
+  emptyCell: { padding: 30, textAlign: "center", color: COLORS.sub, fontWeight: 800, fontSize: 12 },
+  compactResultRow: { display: "flex", alignItems: "center", gap: 6 },
+  statusRow: { flex: "1 1 54%", display: "flex", gap: 4, alignItems: "center", minWidth: 0 },
+  choice: { flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 2, minWidth: 0, height: 30, padding: "0 3px", borderRadius: 8, border: `1px solid ${COLORS.line}`, background: "#fff", fontSize: 10.5, fontWeight: 900, cursor: "pointer", whiteSpace: "nowrap" },
+  passChoiceActive: { flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 2, minWidth: 0, height: 30, padding: "0 3px", borderRadius: 8, border: `1px solid rgba(19,115,51,0.35)`, background: COLORS.greenSoft, color: COLORS.green, fontSize: 10.5, fontWeight: 1000, cursor: "pointer", whiteSpace: "nowrap" },
+  failChoiceActive: { flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 2, minWidth: 0, height: 30, padding: "0 3px", borderRadius: 8, border: `1px solid rgba(180,35,24,0.35)`, background: COLORS.redSoft, color: COLORS.red, fontSize: 10.5, fontWeight: 1000, cursor: "pointer", whiteSpace: "nowrap" },
+  saveRow: { flex: "1 1 46%", display: "flex", gap: 4, minWidth: 0 },
+  minusInputWrap: { flex: 1, minWidth: 44, height: 30, display: "flex", alignItems: "center", border: `1px solid ${COLORS.line}`, borderRadius: 8, background: "#fff", overflow: "hidden" },
+  minus: { paddingLeft: 7, fontWeight: 1000, fontSize: 11 },
+  wrongInput: { width: "100%", minWidth: 0, height: "100%", border: 0, outline: 0, padding: "0 4px 0 2px", fontWeight: 900, fontSize: 11 },
+  saveButton: (disabled) => ({ height: 30, padding: "0 8px", borderRadius: 8, border: `1px solid ${COLORS.line}`, background: COLORS.blueSoft, color: COLORS.text, fontSize: 10.5, fontWeight: 1000, cursor: disabled ? "not-allowed" : "pointer", opacity: disabled ? 0.55 : 1 }),
+  savedText: { marginTop: 4, fontSize: 9.5, color: COLORS.sub, fontWeight: 800, textAlign: "right" },
 };
