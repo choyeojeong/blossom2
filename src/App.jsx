@@ -51,8 +51,8 @@ import ContactFormsPage from "./pages/ContactFormsPage";
 import CounselingPage from "./pages/CounselingPage";
 import CounselingSessionPage from "./pages/CounselingSessionPage";
 
-// ✅ 구글시트 복붙용
-import GoogleSheetExportPage from "./pages/GoogleSheetExportPage";
+// ✅ 단어시험 채점
+import WordTestPage from "./pages/WordTestPage";
 
 import { isAuthed } from "./utils/auth";
 
@@ -183,11 +183,8 @@ export default function App() {
             element={<CounselingSessionPage />}
           />
 
-          {/* ✅ 구글시트 복붙용 */}
-          <Route
-            path="/google-sheet-export"
-            element={<GoogleSheetExportPage />}
-          />
+          {/* ✅ 단어시험 채점 */}
+          <Route path="/word-tests" element={<WordTestPage />} />
         </Route>
 
         {/* 그 외 */}

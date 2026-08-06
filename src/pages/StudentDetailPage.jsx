@@ -203,6 +203,17 @@ export default function StudentDetailPage() {
   const [editingId, setEditingId] = useState(null);
   const [editingText, setEditingText] = useState("");
 
+  // 단어시험 등록 플로팅 화면
+  const [wordTestModal, setWordTestModal] = useState(null); // { dateIso }
+  const [wordTestForm, setWordTestForm] = useState({
+    book: "",
+    range: "",
+    questionCount: "60",
+    cutoff: "3",
+    kinds: { meaning: true, spelling: false, parts: true },
+  });
+  const [wordTestSaving, setWordTestSaving] = useState(false);
+
   const dragRef = useRef(null);
 
   const [eventsByDate, setEventsByDate] = useState({});
@@ -764,6 +775,92 @@ export default function StudentDetailPage() {
       setTodoDraftByDate((prev) => ({ ...prev, [dateIso]: "" }));
     } catch (e) {
       setErr(e?.message || String(e));
+    }
+  }
+
+  function openWordTestModal(dateIso) {
+    setWordTestForm({
+      book: "",
+      range: "",
+      questionCount: "60",
+      cutoff: "3",
+      kinds: { meaning: true, spelling: false, parts: true },
+    });
+    setWordTestModal({ dateIso });
+  }
+
+  function closeWordTestModal() {
+    if (wordTestSaving) return;
+    setWordTestModal(null);
+  }
+
+  function toggleWordTestKind(key) {
+    setWordTestForm((prev) => ({
+      ...prev,
+      kinds: { ...prev.kinds, [key]: !prev.kinds[key] },
+    }));
+  }
+
+  async function saveWordTest() {
+    const dateIso = wordTestModal?.dateIso;
+    if (!dateIso) return;
+
+    const book = String(wordTestForm.book || "").trim();
+    const range = String(wordTestForm.range || "").trim();
+    const questionCount = Number(String(wordTestForm.questionCount || "").replace(/[^0-9]/g, ""));
+    const cutoff = Number(String(wordTestForm.cutoff || "").replace(/[^0-9]/g, ""));
+    const kinds = [
+      wordTestForm.kinds.meaning ? "뜻" : "",
+      wordTestForm.kinds.spelling ? "스펠링" : "",
+      wordTestForm.kinds.parts ? "파포" : "",
+    ].filter(Boolean);
+
+    if (!book) {
+      alert("단어책을 입력해주세요.");
+      return;
+    }
+    if (!range) {
+      alert("범위를 입력해주세요.");
+      return;
+    }
+    if (!Number.isFinite(questionCount) || questionCount <= 0) {
+      alert("시험개수를 숫자로 입력해주세요.");
+      return;
+    }
+    if (!Number.isFinite(cutoff) || cutoff < 0) {
+      alert("커트라인을 숫자로 입력해주세요.");
+      return;
+    }
+    if (!kinds.length) {
+      alert("뜻/스펠링/파포 중 하나 이상을 선택해주세요.");
+      return;
+    }
+
+    const text = `${book}, ${range}, ${questionCount}문제, -${cutoff}컷, ${kinds.join("/")}`;
+
+    setWordTestSaving(true);
+    setErr("");
+    try {
+      const current = todosByDate[dateIso] || [];
+      const nextIndex = current.length ? Math.max(...current.map((x) => x.order_index ?? 0)) + 1 : 0;
+
+      const { data, error } = await supabase
+        .from("student_todos")
+        .insert({ student_id: studentId, todo_date: dateIso, text, order_index: nextIndex })
+        .select("id, todo_date, text, order_index")
+        .single();
+
+      if (error) throw error;
+
+      setTodosByDate((prev) => ({
+        ...prev,
+        [dateIso]: [...(prev[dateIso] || []), { id: data.id, text: data.text, order_index: data.order_index }],
+      }));
+      setWordTestModal(null);
+    } catch (e) {
+      setErr(e?.message || String(e));
+    } finally {
+      setWordTestSaving(false);
     }
   }
 
@@ -1488,6 +1585,23 @@ export default function StudentDetailPage() {
                             추가
                           </button>
                         </div>
+
+                        <button
+                          type="button"
+                          onClick={() => openWordTestModal(dIso)}
+                          style={{
+                            width: "100%",
+                            height: 34,
+                            borderRadius: 10,
+                            border: "1px solid rgba(47,111,237,0.22)",
+                            background: "rgba(47,111,237,0.10)",
+                            color: COLORS.text,
+                            fontWeight: 1000,
+                            cursor: "pointer",
+                          }}
+                        >
+                          단어시험 등록
+                        </button>
                       </div>
                     </div>
                   );
@@ -1642,6 +1756,152 @@ export default function StudentDetailPage() {
           {copied ? <div style={{ fontWeight: 1000, color: COLORS.blue }}>복사완료</div> : null}
         </div>
       </div>
+
+      {/* 단어시험 등록 플로팅 화면 */}
+      {wordTestModal ? (
+        <div
+          role="dialog"
+          aria-modal="true"
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 10000,
+            background: "rgba(10, 18, 32, 0.45)",
+            display: "grid",
+            placeItems: "center",
+            padding: 16,
+          }}
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) closeWordTestModal();
+          }}
+        >
+          <div
+            style={{
+              width: "min(520px, 100%)",
+              borderRadius: 20,
+              border: `1px solid ${COLORS.line}`,
+              background: "#fff",
+              boxShadow: "0 24px 70px rgba(0,0,0,0.24)",
+              padding: 20,
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
+              <div>
+                <div style={{ fontSize: 21, fontWeight: 1000 }}>단어시험 등록</div>
+                <div style={{ marginTop: 5, color: COLORS.sub, fontSize: 13 }}>
+                  {dayjs(wordTestModal.dateIso).format("YYYY년 M월 D일 (ddd)")}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={closeWordTestModal}
+                disabled={wordTestSaving}
+                style={{ width: 34, height: 34, borderRadius: 10, border: `1px solid ${COLORS.line}`, background: "#fff", fontWeight: 1000, cursor: "pointer" }}
+              >
+                ×
+              </button>
+            </div>
+
+            <div style={{ display: "grid", gap: 13, marginTop: 18 }}>
+              <label style={{ display: "grid", gap: 6 }}>
+                <span style={{ fontSize: 12, color: COLORS.sub, fontWeight: 1000 }}>단어책</span>
+                <input
+                  value={wordTestForm.book}
+                  onChange={(e) => setWordTestForm((prev) => ({ ...prev, book: e.target.value }))}
+                  placeholder="예: 워마고등베이직"
+                  style={{ ...tinyInput, width: "100%" }}
+                  autoFocus
+                />
+              </label>
+
+              <label style={{ display: "grid", gap: 6 }}>
+                <span style={{ fontSize: 12, color: COLORS.sub, fontWeight: 1000 }}>범위</span>
+                <input
+                  value={wordTestForm.range}
+                  onChange={(e) => setWordTestForm((prev) => ({ ...prev, range: e.target.value }))}
+                  placeholder="예: 6-10"
+                  style={{ ...tinyInput, width: "100%" }}
+                />
+              </label>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                <label style={{ display: "grid", gap: 6 }}>
+                  <span style={{ fontSize: 12, color: COLORS.sub, fontWeight: 1000 }}>시험개수</span>
+                  <div style={{ display: "flex", alignItems: "center", border: `1px solid ${COLORS.line}`, borderRadius: 10, overflow: "hidden" }}>
+                    <input
+                      inputMode="numeric"
+                      value={wordTestForm.questionCount}
+                      onChange={(e) => setWordTestForm((prev) => ({ ...prev, questionCount: e.target.value.replace(/[^0-9]/g, "") }))}
+                      style={{ ...tinyInput, border: 0, borderRadius: 0, width: "100%" }}
+                    />
+                    <span style={{ paddingRight: 10, fontSize: 12, fontWeight: 900, whiteSpace: "nowrap" }}>문제</span>
+                  </div>
+                </label>
+
+                <label style={{ display: "grid", gap: 6 }}>
+                  <span style={{ fontSize: 12, color: COLORS.sub, fontWeight: 1000 }}>커트라인</span>
+                  <div style={{ display: "flex", alignItems: "center", border: `1px solid ${COLORS.line}`, borderRadius: 10, overflow: "hidden" }}>
+                    <span style={{ paddingLeft: 10, fontWeight: 1000 }}>-</span>
+                    <input
+                      inputMode="numeric"
+                      value={wordTestForm.cutoff}
+                      onChange={(e) => setWordTestForm((prev) => ({ ...prev, cutoff: e.target.value.replace(/[^0-9]/g, "") }))}
+                      style={{ ...tinyInput, border: 0, borderRadius: 0, width: "100%", paddingLeft: 4 }}
+                    />
+                    <span style={{ paddingRight: 10, fontSize: 12, fontWeight: 900 }}>컷</span>
+                  </div>
+                </label>
+              </div>
+
+              <div>
+                <div style={{ fontSize: 12, color: COLORS.sub, fontWeight: 1000, marginBottom: 7 }}>뜻/스펠링/파포</div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8 }}>
+                  {[
+                    ["meaning", "뜻"],
+                    ["spelling", "스펠링"],
+                    ["parts", "파포"],
+                  ].map(([key, label]) => {
+                    const checked = wordTestForm.kinds[key];
+                    return (
+                      <label
+                        key={key}
+                        style={{
+                          height: 40,
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          gap: 6,
+                          borderRadius: 10,
+                          border: checked ? "1px solid rgba(47,111,237,0.45)" : `1px solid ${COLORS.line}`,
+                          background: checked ? "rgba(47,111,237,0.10)" : "#fff",
+                          fontWeight: 1000,
+                          cursor: "pointer",
+                        }}
+                      >
+                        <input type="checkbox" checked={checked} onChange={() => toggleWordTestKind(key)} />
+                        {label}
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div style={{ padding: "10px 12px", borderRadius: 12, background: "rgba(31,42,68,0.04)", color: COLORS.sub, fontSize: 12, fontWeight: 800 }}>
+                등록 예시: 워마고등베이직, 6-10, 60문제, -3컷, 뜻/파포
+              </div>
+            </div>
+
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 18 }}>
+              <button type="button" onClick={closeWordTestModal} disabled={wordTestSaving} style={{ ...btnGhost, height: 40 }}>
+                취소
+              </button>
+              <button type="button" onClick={saveWordTest} disabled={wordTestSaving} style={{ ...btnPrimary, height: 40, opacity: wordTestSaving ? 0.6 : 1 }}>
+                {wordTestSaving ? "저장 중…" : "저장"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {/* ✅ 학생관리 오버레이 */}
       {showStudentsManage ? (

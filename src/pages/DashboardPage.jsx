@@ -15,12 +15,11 @@ const COLORS = {
 export default function DashboardPage() {
   const nav = useNavigate();
 
-  // ✅ 2열 배치/순서 + "구글시트 복붙용" 추가
   // 학생관리 | 일대일시간표
   // 성적관리 | 독해시간표
   // 강의관리 | 출결현황
   // 학부모연락양식 | 키오스크
-  // 상담관리 | 구글시트 복붙용
+  // 상담관리 | 단어시험
   const actions = useMemo(
     () => [
       { label: "학생관리", to: "/students" },
@@ -36,7 +35,7 @@ export default function DashboardPage() {
       { label: "키오스크", to: "/kiosk" },
 
       { label: "상담관리", to: "/counseling" },
-      { label: "구글시트 복붙용", to: "/google-sheet-export" },
+      { label: "단어시험", to: "/word-tests" },
     ],
     []
   );
