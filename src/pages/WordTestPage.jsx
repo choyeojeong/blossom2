@@ -346,6 +346,58 @@ export default function WordTestPage() {
     }
   }
 
+  async function undoResult(row) {
+    if (!row?.result) return;
+
+    const confirmed = window.confirm(
+      row.result.result_status === "absent"
+        ? "저장된 미응시 결과와 연기된 단어시험을 모두 되돌릴까요?"
+        : "저장된 채점 결과를 되돌릴까요?"
+    );
+    if (!confirmed) return;
+
+    setBusyId(row.id);
+    setErr("");
+
+    try {
+      const rescheduledTodoId = row.result?.rescheduled_todo_id || null;
+
+      if (rescheduledTodoId) {
+        const { error: deleteTodoError } = await supabase
+          .from("student_todos")
+          .delete()
+          .eq("id", rescheduledTodoId);
+
+        if (deleteTodoError) throw deleteTodoError;
+      }
+
+      const { error: deleteResultError } = await supabase
+        .from("word_test_results")
+        .delete()
+        .eq("todo_id", row.id);
+
+      if (deleteResultError) throw deleteResultError;
+
+      setRows((prev) =>
+        prev.map((item) => (item.id === row.id ? { ...item, result: null } : item))
+      );
+
+      setHistoryRows((prev) =>
+        prev.map((item) => (item.id === row.id ? { ...item, result: null } : item))
+      );
+
+      setDraft(row.id, {
+        status: "",
+        wrongCount: "",
+        postponedDate: "",
+      });
+    } catch (e) {
+      setErr(e?.message || "저장된 결과를 되돌리지 못했습니다.");
+    } finally {
+      setBusyId("");
+    }
+  }
+
   const dateLabel = useMemo(() => dayjs(dateStr).format("YYYY년 M월 D일 (ddd)"), [dateStr]);
 
   return (
@@ -570,12 +622,22 @@ export default function WordTestPage() {
                             </div>
                           </div>
                           {row.result ? (
-                            <div style={styles.savedText}>
-                              저장됨: {row.result.result_status === "pass"
-                                ? `통과 -${row.result.wrong_count}`
-                                : row.result.result_status === "absent"
-                                  ? `미응시 · ${dayjs(row.result.postponed_date).format("YYYY.MM.DD")}로 연기`
-                                  : `불통과 -${row.result.wrong_count}`}
+                            <div style={styles.savedLine}>
+                              <span style={styles.savedText}>
+                                저장됨: {row.result.result_status === "pass"
+                                  ? `통과 -${row.result.wrong_count}`
+                                  : row.result.result_status === "absent"
+                                    ? `미응시 · ${dayjs(row.result.postponed_date).format("YYYY.MM.DD")}로 연기`
+                                    : `불통과 -${row.result.wrong_count}`}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => undoResult(row)}
+                                disabled={isBusy}
+                                style={styles.undoButton(isBusy)}
+                              >
+                                되돌리기
+                              </button>
                             </div>
                           ) : null}
                         </td>
@@ -646,5 +708,19 @@ const styles = {
   wrongInput: { width: "100%", minWidth: 0, height: "100%", border: 0, outline: 0, padding: "0 4px 0 2px", fontWeight: 900, fontSize: 11 },
   postponedDateInput: { flex: 1, minWidth: 112, height: 30, padding: "0 4px", border: `1px solid ${COLORS.line}`, borderRadius: 8, background: "#fff", fontWeight: 900, fontSize: 10.5 },
   saveButton: (disabled) => ({ height: 30, padding: "0 8px", borderRadius: 8, border: `1px solid ${COLORS.line}`, background: COLORS.blueSoft, color: COLORS.text, fontSize: 10.5, fontWeight: 1000, cursor: disabled ? "not-allowed" : "pointer", opacity: disabled ? 0.55 : 1 }),
-  savedText: { marginTop: 4, fontSize: 9.5, color: COLORS.sub, fontWeight: 800, textAlign: "right" },
+  savedLine: { marginTop: 4, display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 6, minHeight: 18 },
+  savedText: { fontSize: 9.5, color: COLORS.sub, fontWeight: 800, textAlign: "right" },
+  undoButton: (disabled) => ({
+    padding: 0,
+    border: 0,
+    background: "transparent",
+    color: COLORS.sub,
+    fontSize: 9.5,
+    fontWeight: 900,
+    textDecoration: "underline",
+    textUnderlineOffset: 2,
+    cursor: disabled ? "not-allowed" : "pointer",
+    opacity: disabled ? 0.45 : 0.78,
+    whiteSpace: "nowrap",
+  }),
 };
