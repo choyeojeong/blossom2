@@ -40,13 +40,33 @@ function parseWordTest(text) {
   if (!parts[0] || !parts[1] || !questionMatch || !cutoffMatch || !kinds.length) return null;
   if (kinds.some((kind) => !allowedKinds.has(kind))) return null;
 
+  const rangeMatch = parts[1].match(/^(.*?)\s*\(수정:\s*(.*?)\)\s*$/);
+  const originalRange = String(rangeMatch?.[1] || parts[1]).trim();
+  const currentRange = String(rangeMatch?.[2] || parts[1]).trim();
+
+  if (!originalRange || !currentRange) return null;
+
   return {
     book: parts[0],
-    range: parts[1],
+    range: currentRange,
+    originalRange,
+    currentRange,
+    isRangeModified: originalRange !== currentRange,
     questionCount: Number(questionMatch[1]),
     cutoff: -Math.abs(Number(cutoffMatch[1])),
     kinds: kinds.join("/"),
   };
+}
+
+function buildWordTestText(wordTest, nextRange) {
+  const originalRange = String(wordTest?.originalRange || wordTest?.range || "").trim();
+  const currentRange = String(nextRange || originalRange).trim();
+  const rangeText =
+    currentRange && originalRange && currentRange !== originalRange
+      ? `${originalRange} (수정: ${currentRange})`
+      : originalRange;
+
+  return `${wordTest.book}, ${rangeText}, ${wordTest.questionCount}문제, ${wordTest.cutoff}컷, ${wordTest.kinds}`;
 }
 
 function normalizeWrongCount(value) {
@@ -63,6 +83,8 @@ export default function WordTestPage() {
   const [loading, setLoading] = useState(false);
   const [busyId, setBusyId] = useState("");
   const [err, setErr] = useState("");
+  const [editingRangeId, setEditingRangeId] = useState("");
+  const [rangeDraft, setRangeDraft] = useState("");
 
   const [studentQuery, setStudentQuery] = useState("");
   const [historyStart, setHistoryStart] = useState(dayjs().subtract(1, "month").format("YYYY-MM-DD"));
@@ -231,6 +253,81 @@ export default function WordTestPage() {
       ...prev,
       [todoId]: { ...(prev[todoId] || { status: "", wrongCount: "", postponedDate: "" }), ...patch },
     }));
+  }
+
+  function startRangeEdit(row) {
+    setEditingRangeId(row.id);
+    setRangeDraft(row.wordTest.currentRange || row.wordTest.range || "");
+  }
+
+  function cancelRangeEdit() {
+    setEditingRangeId("");
+    setRangeDraft("");
+  }
+
+  async function saveRangeEdit(row) {
+    const nextRange = String(rangeDraft || "").trim();
+    if (!nextRange) {
+      alert("수정할 범위를 입력해주세요.");
+      return;
+    }
+
+    const currentRange = String(row.wordTest.currentRange || row.wordTest.range || "").trim();
+    if (nextRange === currentRange) {
+      cancelRangeEdit();
+      return;
+    }
+
+    setBusyId(row.id);
+    setErr("");
+
+    try {
+      const nextText = buildWordTestText(row.wordTest, nextRange);
+
+      const { data: updatedTodo, error: updateError } = await supabase
+        .from("student_todos")
+        .update({ text: nextText })
+        .eq("id", row.id)
+        .select("id, student_id, todo_date, text, order_index, created_at")
+        .single();
+
+      if (updateError) throw updateError;
+
+      const nextWordTest = parseWordTest(updatedTodo.text);
+      if (!nextWordTest) throw new Error("수정된 단어시험 범위를 읽지 못했습니다.");
+
+      const rescheduledTodoId = row.result?.rescheduled_todo_id || null;
+      if (rescheduledTodoId) {
+        const { error: postponedUpdateError } = await supabase
+          .from("student_todos")
+          .update({ text: nextText })
+          .eq("id", rescheduledTodoId);
+
+        if (postponedUpdateError) throw postponedUpdateError;
+      }
+
+      setRows((prev) =>
+        prev.map((item) =>
+          item.id === row.id
+            ? { ...item, ...updatedTodo, wordTest: nextWordTest }
+            : item
+        )
+      );
+
+      setHistoryRows((prev) =>
+        prev.map((item) =>
+          item.id === row.id
+            ? { ...item, ...updatedTodo, wordTest: nextWordTest }
+            : item
+        )
+      );
+
+      cancelRangeEdit();
+    } catch (e) {
+      setErr(e?.message || "단어시험 범위를 수정하지 못했습니다.");
+    } finally {
+      setBusyId("");
+    }
   }
 
   async function saveResult(row) {
@@ -474,7 +571,16 @@ export default function WordTestPage() {
                         <td style={styles.historyTdStrong}>{row.student?.name || "-"}</td>
                         <td style={styles.historyTd}>{row.student ? `${row.student.school || "-"} / ${row.student.grade || "-"}` : "-"}</td>
                         <td style={styles.historyTd}>{row.wordTest.book}</td>
-                        <td style={styles.historyTdCenter}>{row.wordTest.range}</td>
+                        <td style={styles.historyTdCenter}>
+                          {row.wordTest.isRangeModified ? (
+                            <div style={styles.rangeHistoryWrap}>
+                              <span style={styles.originalRangeText}>기존 {row.wordTest.originalRange}</span>
+                              <span style={styles.changedRangeText}>수정 {row.wordTest.currentRange}</span>
+                            </div>
+                          ) : (
+                            row.wordTest.currentRange
+                          )}
+                        </td>
                         <td style={styles.historyTdCenter}>{row.wordTest.questionCount}</td>
                         <td style={styles.historyTdCenter}>{row.wordTest.cutoff}컷</td>
                         <td style={styles.historyTdCenter}>{row.wordTest.kinds}</td>
@@ -559,7 +665,60 @@ export default function WordTestPage() {
                         <td style={styles.td}>{row.student ? `${row.student.school || "-"} / ${row.student.grade || "-"}` : "-"}</td>
                         <td style={styles.td}>{row.student?.teacher_name || "-"}</td>
                         <td style={styles.td}>{row.wordTest.book}</td>
-                        <td style={styles.tdCenter}>{row.wordTest.range}</td>
+                        <td style={styles.rangeTd}>
+                          {editingRangeId === row.id ? (
+                            <div style={styles.rangeEditBox}>
+                              <input
+                                value={rangeDraft}
+                                onChange={(e) => setRangeDraft(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter") saveRangeEdit(row);
+                                  if (e.key === "Escape") cancelRangeEdit();
+                                }}
+                                placeholder="수정 범위"
+                                style={styles.rangeInput}
+                                autoFocus
+                              />
+                              <div style={styles.rangeEditActions}>
+                                <button
+                                  type="button"
+                                  onClick={() => saveRangeEdit(row)}
+                                  disabled={isBusy}
+                                  style={styles.rangeSaveButton(isBusy)}
+                                >
+                                  저장
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={cancelRangeEdit}
+                                  disabled={isBusy}
+                                  style={styles.rangeCancelButton(isBusy)}
+                                >
+                                  취소
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            <div style={styles.rangeDisplay}>
+                              {row.wordTest.isRangeModified ? (
+                                <>
+                                  <span style={styles.originalRangeText}>기존 {row.wordTest.originalRange}</span>
+                                  <span style={styles.changedRangeText}>수정 {row.wordTest.currentRange}</span>
+                                </>
+                              ) : (
+                                <span style={styles.currentRangeText}>{row.wordTest.currentRange}</span>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() => startRangeEdit(row)}
+                                disabled={isBusy}
+                                style={styles.rangeEditButton(isBusy)}
+                              >
+                                수정
+                              </button>
+                            </div>
+                          )}
+                        </td>
                         <td style={styles.tdCenter}>{row.wordTest.questionCount}문제</td>
                         <td style={styles.tdCenter}>{row.wordTest.cutoff}컷</td>
                         <td style={styles.tdCenter}>{row.wordTest.kinds}</td>
@@ -694,6 +853,18 @@ const styles = {
   td: { padding: "8px 5px", borderBottom: `1px solid ${COLORS.lineSoft}`, borderRight: `1px solid ${COLORS.lineSoft}`, fontSize: 11, textAlign: "left", lineHeight: 1.35, wordBreak: "break-word" },
   tdStrong: { padding: "8px 4px", borderBottom: `1px solid ${COLORS.lineSoft}`, borderRight: `1px solid ${COLORS.lineSoft}`, fontSize: 12, fontWeight: 1000, textAlign: "center", wordBreak: "break-word" },
   tdCenter: { padding: "8px 3px", borderBottom: `1px solid ${COLORS.lineSoft}`, borderRight: `1px solid ${COLORS.lineSoft}`, fontSize: 10.8, textAlign: "center", fontWeight: 800, lineHeight: 1.3, wordBreak: "break-word" },
+  rangeTd: { padding: "6px 4px", borderBottom: `1px solid ${COLORS.lineSoft}`, borderRight: `1px solid ${COLORS.lineSoft}`, textAlign: "center" },
+  rangeDisplay: { display: "flex", flexDirection: "column", alignItems: "center", gap: 3, minWidth: 0 },
+  rangeHistoryWrap: { display: "flex", flexDirection: "column", alignItems: "center", gap: 2 },
+  currentRangeText: { fontSize: 10.8, fontWeight: 900 },
+  originalRangeText: { fontSize: 9.5, color: COLORS.sub, fontWeight: 800, textDecoration: "line-through", textDecorationThickness: "1px" },
+  changedRangeText: { fontSize: 10.8, color: COLORS.blue, fontWeight: 1000 },
+  rangeEditButton: (disabled) => ({ padding: 0, border: 0, background: "transparent", color: COLORS.sub, fontSize: 9.5, fontWeight: 900, textDecoration: "underline", textUnderlineOffset: 2, cursor: disabled ? "not-allowed" : "pointer", opacity: disabled ? 0.45 : 0.82 }),
+  rangeEditBox: { display: "grid", gap: 4 },
+  rangeInput: { width: "100%", minWidth: 0, height: 28, padding: "0 5px", borderRadius: 7, border: `1px solid ${COLORS.line}`, outline: 0, textAlign: "center", fontSize: 10.5, fontWeight: 900 },
+  rangeEditActions: { display: "flex", justifyContent: "center", gap: 4 },
+  rangeSaveButton: (disabled) => ({ height: 24, padding: "0 6px", borderRadius: 6, border: `1px solid rgba(47,111,237,0.24)`, background: COLORS.blueSoft, color: COLORS.text, fontSize: 9.5, fontWeight: 1000, cursor: disabled ? "not-allowed" : "pointer", opacity: disabled ? 0.55 : 1 }),
+  rangeCancelButton: (disabled) => ({ height: 24, padding: "0 6px", borderRadius: 6, border: `1px solid ${COLORS.line}`, background: "#fff", color: COLORS.sub, fontSize: 9.5, fontWeight: 900, cursor: disabled ? "not-allowed" : "pointer", opacity: disabled ? 0.55 : 1 }),
   resultTd: { padding: "7px 6px", borderBottom: `1px solid ${COLORS.lineSoft}` },
   emptyCell: { padding: 30, textAlign: "center", color: COLORS.sub, fontWeight: 800, fontSize: 12 },
   compactResultRow: { display: "flex", alignItems: "center", gap: 6 },
