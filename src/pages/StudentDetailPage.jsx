@@ -406,7 +406,12 @@ export default function StudentDetailPage() {
     else if (status === "absent") bg = COLORS.redSoft;
     else if (isGreenDay(dateIso)) bg = COLORS.greenSoft;
 
-    return { labels, status, bg };
+    return {
+      labels,
+      status,
+      bg,
+      readingMemo: meta?.readingMemo || "",
+    };
   }
 
   async function loadCourses() {
