@@ -764,7 +764,7 @@ export default function ReadingSchedulePage() {
       ] = await Promise.all([
         supabase
           .from("student_events")
-          .select("id,event_date,kind,event_kind,schedule_kind,original_event_id")
+          .select("id,event_date,kind,event_kind,schedule_kind,original_event_id,attendance_status")
           .eq("student_id", r.student_id)
           .lte("event_date", upperDate)
           .in("kind", otoKinds)
@@ -772,7 +772,7 @@ export default function ReadingSchedulePage() {
           .limit(20),
         supabase
           .from("student_events")
-          .select("id,event_date,kind,event_kind,schedule_kind,original_event_id")
+          .select("id,event_date,kind,event_kind,schedule_kind,original_event_id,attendance_status")
           .eq("student_id", r.student_id)
           .lte("event_date", upperDate)
           .in("event_kind", otoKinds)
@@ -780,7 +780,7 @@ export default function ReadingSchedulePage() {
           .limit(20),
         supabase
           .from("student_events")
-          .select("id,event_date,kind,event_kind,schedule_kind,original_event_id")
+          .select("id,event_date,kind,event_kind,schedule_kind,original_event_id,attendance_status")
           .eq("student_id", r.student_id)
           .lte("event_date", upperDate)
           .eq("event_kind", "makeup")
@@ -837,6 +837,10 @@ export default function ReadingSchedulePage() {
       const eventMap = new Map();
       for (const item of [...(kindRows || []), ...(eventKindRows || []), ...otoMakeupRows]) {
         if (!item?.id || !item?.event_date) continue;
+
+        // 결석 처리된 일대일 수업/보강은 "실제로 진행된 최근 수업"에서 제외한다.
+        if (String(item?.attendance_status || "").toLowerCase() === "absent") continue;
+
         eventMap.set(String(item.id), item);
       }
 
