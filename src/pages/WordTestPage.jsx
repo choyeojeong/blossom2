@@ -240,6 +240,17 @@ export default function WordTestPage() {
       }));
 
       setHistoryRows(nextHistoryRows);
+      setDrafts((prev) => {
+        const next = { ...prev };
+        nextHistoryRows.forEach((row) => {
+          next[row.id] = {
+            status: row.result?.result_status || "",
+            wrongCount: row.result?.wrong_count ?? "",
+            postponedDate: row.result?.postponed_date || "",
+          };
+        });
+        return next;
+      });
     } catch (e) {
       setHistoryRows([]);
       setHistoryErr(e?.message || "학생 단어시험 기록을 불러오지 못했습니다.");
@@ -431,6 +442,7 @@ export default function WordTestPage() {
       if (error) throw error;
 
       setRows((prev) => prev.map((item) => (item.id === row.id ? { ...item, result: data } : item)));
+      setHistoryRows((prev) => prev.map((item) => (item.id === row.id ? { ...item, result: data } : item)));
       setDraft(row.id, {
         status: data.result_status,
         wrongCount: data.wrong_count ?? "",
@@ -584,26 +596,94 @@ export default function WordTestPage() {
                         <td style={styles.historyTdCenter}>{row.wordTest.questionCount}</td>
                         <td style={styles.historyTdCenter}>{row.wordTest.cutoff}컷</td>
                         <td style={styles.historyTdCenter}>{row.wordTest.kinds}</td>
-                        <td style={styles.historyTdCenter}>
-                          {row.result ? (
-                            <span
-                              style={
-                                row.result.result_status === "pass"
-                                  ? styles.passBadge
-                                  : row.result.result_status === "absent"
-                                    ? styles.absentBadge
-                                    : styles.failBadge
-                              }
-                            >
-                              {row.result.result_status === "pass"
-                                ? `통과 -${row.result.wrong_count}`
-                                : row.result.result_status === "absent"
-                                  ? `미응시 → ${dayjs(row.result.postponed_date).format("MM.DD")}`
-                                  : `불통과 -${row.result.wrong_count}`}
-                            </span>
-                          ) : (
-                            <span style={styles.pendingBadge}>미채점</span>
-                          )}
+                        <td style={styles.historyResultTd}>
+                          {(() => {
+                            const draft = drafts[row.id] || {
+                              status: row.result?.result_status || "",
+                              wrongCount: row.result?.wrong_count ?? "",
+                              postponedDate: row.result?.postponed_date || "",
+                            };
+                            const isBusy = busyId === row.id;
+
+                            return (
+                              <>
+                                <div style={styles.historyStatusRow}>
+                                  <label style={draft.status === "pass" ? styles.historyPassChoiceActive : styles.historyChoice}>
+                                    <input
+                                      type="radio"
+                                      name={`history-status-${row.id}`}
+                                      checked={draft.status === "pass"}
+                                      onChange={() => setDraft(row.id, { status: "pass" })}
+                                    />
+                                    통과
+                                  </label>
+                                  <label style={draft.status === "fail" ? styles.historyFailChoiceActive : styles.historyChoice}>
+                                    <input
+                                      type="radio"
+                                      name={`history-status-${row.id}`}
+                                      checked={draft.status === "fail"}
+                                      onChange={() => setDraft(row.id, { status: "fail" })}
+                                    />
+                                    불통과
+                                  </label>
+                                  <label style={draft.status === "absent" ? styles.historyAbsentChoiceActive : styles.historyChoice}>
+                                    <input
+                                      type="radio"
+                                      name={`history-status-${row.id}`}
+                                      checked={draft.status === "absent"}
+                                      onChange={() => setDraft(row.id, { status: "absent", wrongCount: "" })}
+                                    />
+                                    미응시
+                                  </label>
+                                </div>
+                                <div style={styles.historySaveRow}>
+                                  {draft.status === "absent" ? (
+                                    <input
+                                      type="date"
+                                      min={dayjs(row.todo_date).add(1, "day").format("YYYY-MM-DD")}
+                                      value={draft.postponedDate || ""}
+                                      onChange={(e) => setDraft(row.id, { postponedDate: e.target.value })}
+                                      style={styles.historyPostponedDateInput}
+                                      aria-label="연기 날짜"
+                                    />
+                                  ) : (
+                                    <div style={styles.historyMinusInputWrap}>
+                                      <span style={styles.minus}>-</span>
+                                      <input
+                                        inputMode="numeric"
+                                        value={draft.wrongCount}
+                                        onChange={(e) => setDraft(row.id, { wrongCount: e.target.value.replace(/[^0-9]/g, "") })}
+                                        placeholder="2"
+                                        style={styles.historyWrongInput}
+                                      />
+                                    </div>
+                                  )}
+                                  <button type="button" disabled={isBusy} onClick={() => saveResult(row)} style={styles.historySaveButton(isBusy)}>
+                                    저장
+                                  </button>
+                                </div>
+                                {row.result ? (
+                                  <div style={styles.historySavedLine}>
+                                    <span style={styles.savedText}>
+                                      저장됨: {row.result.result_status === "pass"
+                                        ? `통과 -${row.result.wrong_count}`
+                                        : row.result.result_status === "absent"
+                                          ? `미응시 · ${dayjs(row.result.postponed_date).format("YYYY.MM.DD")}로 연기`
+                                          : `불통과 -${row.result.wrong_count}`}
+                                    </span>
+                                    <button
+                                      type="button"
+                                      onClick={() => undoResult(row)}
+                                      disabled={isBusy}
+                                      style={styles.undoButton(isBusy)}
+                                    >
+                                      되돌리기
+                                    </button>
+                                  </div>
+                                ) : null}
+                              </>
+                            );
+                          })()}
                         </td>
                       </tr>
                     ))
@@ -839,6 +919,18 @@ const styles = {
   failBadge: { display: "inline-block", padding: "3px 6px", borderRadius: 999, background: COLORS.redSoft, color: COLORS.red, fontSize: 10.5, fontWeight: 1000 },
   absentBadge: { display: "inline-block", padding: "3px 6px", borderRadius: 999, background: COLORS.orangeSoft, color: COLORS.orange, fontSize: 10.5, fontWeight: 1000 },
   pendingBadge: { display: "inline-block", padding: "3px 6px", borderRadius: 999, background: "rgba(93,107,130,0.10)", color: COLORS.sub, fontSize: 10.5, fontWeight: 900 },
+  historyResultTd: { padding: "6px 5px", borderBottom: `1px solid ${COLORS.lineSoft}`, borderRight: `1px solid ${COLORS.lineSoft}`, verticalAlign: "middle" },
+  historyStatusRow: { display: "flex", alignItems: "center", gap: 3, minWidth: 0 },
+  historyChoice: { flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 1, minWidth: 0, height: 26, padding: "0 2px", borderRadius: 7, border: `1px solid ${COLORS.line}`, background: "#fff", fontSize: 9.5, fontWeight: 900, cursor: "pointer", whiteSpace: "nowrap" },
+  historyPassChoiceActive: { flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 1, minWidth: 0, height: 26, padding: "0 2px", borderRadius: 7, border: `1px solid rgba(19,115,51,0.35)`, background: COLORS.greenSoft, color: COLORS.green, fontSize: 9.5, fontWeight: 1000, cursor: "pointer", whiteSpace: "nowrap" },
+  historyFailChoiceActive: { flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 1, minWidth: 0, height: 26, padding: "0 2px", borderRadius: 7, border: `1px solid rgba(180,35,24,0.35)`, background: COLORS.redSoft, color: COLORS.red, fontSize: 9.5, fontWeight: 1000, cursor: "pointer", whiteSpace: "nowrap" },
+  historyAbsentChoiceActive: { flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 1, minWidth: 0, height: 26, padding: "0 2px", borderRadius: 7, border: `1px solid rgba(180,83,9,0.35)`, background: COLORS.orangeSoft, color: COLORS.orange, fontSize: 9.5, fontWeight: 1000, cursor: "pointer", whiteSpace: "nowrap" },
+  historySaveRow: { marginTop: 4, display: "flex", alignItems: "center", gap: 3, minWidth: 0 },
+  historyMinusInputWrap: { flex: 1, minWidth: 38, height: 26, display: "flex", alignItems: "center", border: `1px solid ${COLORS.line}`, borderRadius: 7, background: "#fff", overflow: "hidden" },
+  historyWrongInput: { width: "100%", minWidth: 0, height: "100%", border: 0, outline: 0, padding: "0 3px 0 1px", fontWeight: 900, fontSize: 10 },
+  historyPostponedDateInput: { flex: 1, minWidth: 0, height: 26, padding: "0 2px", border: `1px solid ${COLORS.line}`, borderRadius: 7, background: "#fff", fontWeight: 900, fontSize: 9 },
+  historySaveButton: (disabled) => ({ height: 26, padding: "0 6px", borderRadius: 7, border: `1px solid ${COLORS.line}`, background: COLORS.blueSoft, color: COLORS.text, fontSize: 9.5, fontWeight: 1000, cursor: disabled ? "not-allowed" : "pointer", opacity: disabled ? 0.55 : 1 }),
+  historySavedLine: { marginTop: 3, display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 4, minHeight: 16 },
   dateBar: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 14, flexWrap: "wrap", padding: "11px 13px", borderRadius: 16, border: `1px solid ${COLORS.lineSoft}`, background: "rgba(255,255,255,0.70)" },
   dateTitle: { fontSize: 16, fontWeight: 1000 },
   dateSub: { marginTop: 4, fontSize: 12, color: COLORS.sub },
