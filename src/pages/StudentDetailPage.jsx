@@ -186,9 +186,10 @@ function PlusIcon() {
   );
 }
 
-export default function StudentDetailPage() {
+export default function StudentDetailPage({ studentId: studentIdProp, onClose }) {
   const nav = useNavigate();
-  const { studentId } = useParams();
+  const { studentId: routeStudentId } = useParams();
+  const studentId = studentIdProp || routeStudentId;
 
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
@@ -1482,7 +1483,7 @@ export default function StudentDetailPage() {
               성적페이지
             </button>
 
-            <button type="button" style={btnGhost} onClick={() => nav(-1)}>
+            <button type="button" style={btnGhost} onClick={() => (onClose ? onClose() : nav(-1))}>
               뒤로
             </button>
             <button type="button" style={btn} onClick={() => load()} disabled={loading}>

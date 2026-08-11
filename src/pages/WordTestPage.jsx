@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import dayjs from "dayjs";
 import "dayjs/locale/ko";
 import { supabase } from "../utils/supabaseClient";
+import StudentDetailPage from "./StudentDetailPage";
 
 dayjs.locale("ko");
 
@@ -93,11 +94,29 @@ export default function WordTestPage() {
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historySearched, setHistorySearched] = useState(false);
   const [historyErr, setHistoryErr] = useState("");
+  const [detailStudentId, setDetailStudentId] = useState("");
 
   useEffect(() => {
     loadWordTests();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dateStr]);
+
+  useEffect(() => {
+    if (!detailStudentId) return;
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+
+    const onKeyDown = (e) => {
+      if (e.key === "Escape") setDetailStudentId("");
+    };
+    window.addEventListener("keydown", onKeyDown);
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [detailStudentId]);
 
   async function loadWordTests() {
     setLoading(true);
@@ -580,7 +599,20 @@ export default function WordTestPage() {
                     historyRows.map((row) => (
                       <tr key={`history-${row.id}`}>
                         <td style={styles.historyTdCenter}>{dayjs(row.todo_date).format("YYYY.MM.DD")}</td>
-                        <td style={styles.historyTdStrong}>{row.student?.name || "-"}</td>
+                        <td style={styles.historyTdStrong}>
+                          {row.student?.id ? (
+                            <button
+                              type="button"
+                              onClick={() => setDetailStudentId(row.student.id)}
+                              style={styles.studentNameButton}
+                              title={`${row.student.name} 학생 상세페이지 열기`}
+                            >
+                              {row.student.name}
+                            </button>
+                          ) : (
+                            "-"
+                          )}
+                        </td>
                         <td style={styles.historyTd}>{row.student ? `${row.student.school || "-"} / ${row.student.grade || "-"}` : "-"}</td>
                         <td style={styles.historyTd}>{row.wordTest.book}</td>
                         <td style={styles.historyTdCenter}>
@@ -741,7 +773,20 @@ export default function WordTestPage() {
                     const isBusy = busyId === row.id;
                     return (
                       <tr key={row.id}>
-                        <td style={styles.tdStrong}>{row.student?.name || "-"}</td>
+                        <td style={styles.tdStrong}>
+                          {row.student?.id ? (
+                            <button
+                              type="button"
+                              onClick={() => setDetailStudentId(row.student.id)}
+                              style={styles.studentNameButton}
+                              title={`${row.student.name} 학생 상세페이지 열기`}
+                            >
+                              {row.student.name}
+                            </button>
+                          ) : (
+                            "-"
+                          )}
+                        </td>
                         <td style={styles.td}>{row.student ? `${row.student.school || "-"} / ${row.student.grade || "-"}` : "-"}</td>
                         <td style={styles.td}>{row.student?.teacher_name || "-"}</td>
                         <td style={styles.td}>{row.wordTest.book}</td>
@@ -889,6 +934,35 @@ export default function WordTestPage() {
           </div>
         </div>
       </div>
+
+      {detailStudentId ? (
+        <div
+          role="dialog"
+          aria-modal="true"
+          style={styles.detailOverlay}
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) setDetailStudentId("");
+          }}
+        >
+          <div style={styles.detailModal}>
+            <div style={styles.detailModalHeader}>
+              <div style={styles.detailModalTitle}>학생 상세페이지</div>
+              <button
+                type="button"
+                onClick={() => setDetailStudentId("")}
+                style={styles.detailCloseButton}
+                aria-label="학생 상세페이지 닫기"
+                title="닫기"
+              >
+                ×
+              </button>
+            </div>
+            <div style={styles.detailModalBody}>
+              <StudentDetailPage studentId={detailStudentId} onClose={() => setDetailStudentId("")} />
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -973,6 +1047,13 @@ const styles = {
   saveButton: (disabled) => ({ height: 30, padding: "0 8px", borderRadius: 8, border: `1px solid ${COLORS.line}`, background: COLORS.blueSoft, color: COLORS.text, fontSize: 10.5, fontWeight: 1000, cursor: disabled ? "not-allowed" : "pointer", opacity: disabled ? 0.55 : 1 }),
   savedLine: { marginTop: 4, display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 6, minHeight: 18 },
   savedText: { fontSize: 9.5, color: COLORS.sub, fontWeight: 800, textAlign: "right" },
+  studentNameButton: { padding: 0, border: 0, background: "transparent", color: COLORS.blue, font: "inherit", fontWeight: 1000, textDecoration: "underline", textUnderlineOffset: 3, cursor: "pointer" },
+  detailOverlay: { position: "fixed", inset: 0, zIndex: 20000, background: "rgba(10,18,32,0.48)", display: "flex", alignItems: "stretch", justifyContent: "center", padding: "calc(env(safe-area-inset-top, 0px) + 10px) 10px calc(env(safe-area-inset-bottom, 0px) + 10px)" },
+  detailModal: { width: "min(1500px, 100%)", height: "100%", minHeight: 0, borderRadius: 18, border: `1px solid ${COLORS.line}`, background: "#fff", boxShadow: "0 24px 80px rgba(0,0,0,0.28)", overflow: "hidden", display: "flex", flexDirection: "column" },
+  detailModalHeader: { flex: "0 0 auto", height: 48, padding: "0 12px 0 16px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, borderBottom: `1px solid ${COLORS.lineSoft}`, background: "rgba(255,255,255,0.96)" },
+  detailModalTitle: { fontSize: 14, fontWeight: 1000 },
+  detailCloseButton: { width: 34, height: 34, borderRadius: 10, border: `1px solid ${COLORS.line}`, background: "#fff", color: COLORS.text, fontSize: 22, lineHeight: 1, fontWeight: 700, cursor: "pointer" },
+  detailModalBody: { flex: 1, minHeight: 0, overflow: "auto", background: COLORS.bgBottom },
   undoButton: (disabled) => ({
     padding: 0,
     border: 0,
