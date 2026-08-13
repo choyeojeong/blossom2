@@ -546,6 +546,11 @@ export default function ReadingSchedulePage() {
   }
 
   async function resetAttendance(r) {
+    const ok = window.confirm(
+      `${r?.student_name || "이 학생"}의 출결 체크를 초기화할까요?\n\n초기화하면 현재 출석/결석 기록과 관련 정보가 삭제됩니다.`
+    );
+    if (!ok) return;
+
     try {
       setErr("");
 
