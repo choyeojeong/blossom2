@@ -19,8 +19,6 @@ const COLORS = {
   redSoft: "rgba(180,35,24,0.10)",
   green: "#137333",
   greenSoft: "rgba(19,115,51,0.10)",
-  orange: "#b45309",
-  orangeSoft: "rgba(245,158,11,0.14)",
 };
 
 function parseWordTest(text) {
@@ -146,7 +144,7 @@ export default function WordTestPage() {
 
       const [{ data: students, error: studentError }, { data: results, error: resultError }] = await Promise.all([
         supabase.from("students").select("id, name, school, grade, teacher_name").in("id", studentIds),
-        supabase.from("word_test_results").select("todo_id, result_status, wrong_count, postponed_date, rescheduled_todo_id, updated_at").in("todo_id", todoIds),
+        supabase.from("word_test_results").select("todo_id, result_status, wrong_count, updated_at").in("todo_id", todoIds),
       ]);
 
       if (studentError) throw studentError;
@@ -170,9 +168,8 @@ export default function WordTestPage() {
       const nextDrafts = {};
       nextRows.forEach((row) => {
         nextDrafts[row.id] = {
-          status: row.result?.result_status || "",
+          status: ["pass", "fail"].includes(row.result?.result_status) ? row.result.result_status : "",
           wrongCount: row.result?.wrong_count ?? "",
-          postponedDate: row.result?.postponed_date || "",
         };
       });
 
@@ -244,7 +241,7 @@ export default function WordTestPage() {
       const todoIds = parsedTodos.map((todo) => todo.id);
       const { data: results, error: resultError } = await supabase
         .from("word_test_results")
-        .select("todo_id, result_status, wrong_count, postponed_date, rescheduled_todo_id, updated_at")
+        .select("todo_id, result_status, wrong_count, updated_at")
         .in("todo_id", todoIds);
 
       if (resultError) throw resultError;
@@ -263,9 +260,8 @@ export default function WordTestPage() {
         const next = { ...prev };
         nextHistoryRows.forEach((row) => {
           next[row.id] = {
-            status: row.result?.result_status || "",
+            status: ["pass", "fail"].includes(row.result?.result_status) ? row.result.result_status : "",
             wrongCount: row.result?.wrong_count ?? "",
-            postponedDate: row.result?.postponed_date || "",
           };
         });
         return next;
@@ -281,7 +277,7 @@ export default function WordTestPage() {
   function setDraft(todoId, patch) {
     setDrafts((prev) => ({
       ...prev,
-      [todoId]: { ...(prev[todoId] || { status: "", wrongCount: "", postponedDate: "" }), ...patch },
+      [todoId]: { ...(prev[todoId] || { status: "", wrongCount: "" }), ...patch },
     }));
   }
 
@@ -326,16 +322,6 @@ export default function WordTestPage() {
       const nextWordTest = parseWordTest(updatedTodo.text);
       if (!nextWordTest) throw new Error("수정된 단어시험 범위를 읽지 못했습니다.");
 
-      const rescheduledTodoId = row.result?.rescheduled_todo_id || null;
-      if (rescheduledTodoId) {
-        const { error: postponedUpdateError } = await supabase
-          .from("student_todos")
-          .update({ text: nextText })
-          .eq("id", rescheduledTodoId);
-
-        if (postponedUpdateError) throw postponedUpdateError;
-      }
-
       setRows((prev) =>
         prev.map((item) =>
           item.id === row.id
@@ -362,100 +348,34 @@ export default function WordTestPage() {
 
   async function saveResult(row) {
     const draft = drafts[row.id] || {};
-    if (!draft.status) {
-      alert("통과, 불통과, 미응시 중 하나를 선택해주세요.");
+    if (!["pass", "fail"].includes(draft.status)) {
+      alert("통과 또는 불통과를 선택해주세요.");
       return;
     }
 
-    const isAbsent = draft.status === "absent";
-    let wrongCount = null;
-    let postponedDate = null;
-
-    if (isAbsent) {
-      postponedDate = String(draft.postponedDate || "").trim();
-      if (!postponedDate) {
-        alert("미응시한 단어시험을 다시 볼 날짜를 선택해주세요.");
-        return;
-      }
-      if (!dayjs(postponedDate).isAfter(dayjs(row.todo_date), "day")) {
-        alert("연기 날짜는 원래 시험일보다 늦은 날짜로 선택해주세요.");
-        return;
-      }
-    } else {
-      wrongCount = normalizeWrongCount(draft.wrongCount);
-      if (wrongCount === null) {
-        alert("틀린 개수를 입력해주세요. 예: -2 또는 2");
-        return;
-      }
+    const wrongCount = normalizeWrongCount(draft.wrongCount);
+    if (wrongCount === null) {
+      alert("틀린 개수를 입력해주세요. 예: -2 또는 2");
+      return;
     }
 
     setBusyId(row.id);
     setErr("");
 
     try {
-      let rescheduledTodoId = row.result?.rescheduled_todo_id || null;
-
-      if (isAbsent) {
-        const todoPayload = {
-          student_id: row.student_id,
-          todo_date: postponedDate,
-          text: row.text,
-        };
-
-        if (rescheduledTodoId) {
-          const { data: updatedTodo, error: updateTodoError } = await supabase
-            .from("student_todos")
-            .update(todoPayload)
-            .eq("id", rescheduledTodoId)
-            .select("id")
-            .maybeSingle();
-
-          if (updateTodoError) throw updateTodoError;
-          if (!updatedTodo) rescheduledTodoId = null;
-        }
-
-        if (!rescheduledTodoId) {
-          const { data: targetTodos, error: targetTodoError } = await supabase
-            .from("student_todos")
-            .select("order_index")
-            .eq("student_id", row.student_id)
-            .eq("todo_date", postponedDate)
-            .order("order_index", { ascending: false })
-            .limit(1);
-
-          if (targetTodoError) throw targetTodoError;
-          const nextIndex = targetTodos?.length ? (targetTodos[0].order_index ?? 0) + 1 : 0;
-
-          const { data: insertedTodo, error: insertTodoError } = await supabase
-            .from("student_todos")
-            .insert({ ...todoPayload, order_index: nextIndex })
-            .select("id")
-            .single();
-
-          if (insertTodoError) throw insertTodoError;
-          rescheduledTodoId = String(insertedTodo.id);
-        }
-      } else if (rescheduledTodoId) {
-        const { error: deleteTodoError } = await supabase.from("student_todos").delete().eq("id", rescheduledTodoId);
-        if (deleteTodoError) throw deleteTodoError;
-        rescheduledTodoId = null;
-      }
-
       const payload = {
         todo_id: row.id,
         student_id: row.student_id,
         test_date: row.todo_date,
         result_status: draft.status,
-        wrong_count: isAbsent ? null : wrongCount,
-        postponed_date: isAbsent ? postponedDate : null,
-        rescheduled_todo_id: isAbsent ? rescheduledTodoId : null,
+        wrong_count: wrongCount,
         updated_at: new Date().toISOString(),
       };
 
       const { data, error } = await supabase
         .from("word_test_results")
         .upsert(payload, { onConflict: "todo_id" })
-        .select("todo_id, result_status, wrong_count, postponed_date, rescheduled_todo_id, updated_at")
+        .select("todo_id, result_status, wrong_count, updated_at")
         .single();
 
       if (error) throw error;
@@ -465,7 +385,6 @@ export default function WordTestPage() {
       setDraft(row.id, {
         status: data.result_status,
         wrongCount: data.wrong_count ?? "",
-        postponedDate: data.postponed_date || "",
       });
     } catch (e) {
       setErr(e?.message || "채점 결과 저장에 실패했습니다.");
@@ -475,30 +394,15 @@ export default function WordTestPage() {
   }
 
   async function undoResult(row) {
-    if (!row?.result) return;
+    if (!row?.result || !["pass", "fail"].includes(row.result.result_status)) return;
 
-    const confirmed = window.confirm(
-      row.result.result_status === "absent"
-        ? "저장된 미응시 결과와 연기된 단어시험을 모두 되돌릴까요?"
-        : "저장된 채점 결과를 되돌릴까요?"
-    );
+    const confirmed = window.confirm("저장된 채점 결과를 되돌릴까요?");
     if (!confirmed) return;
 
     setBusyId(row.id);
     setErr("");
 
     try {
-      const rescheduledTodoId = row.result?.rescheduled_todo_id || null;
-
-      if (rescheduledTodoId) {
-        const { error: deleteTodoError } = await supabase
-          .from("student_todos")
-          .delete()
-          .eq("id", rescheduledTodoId);
-
-        if (deleteTodoError) throw deleteTodoError;
-      }
-
       const { error: deleteResultError } = await supabase
         .from("word_test_results")
         .delete()
@@ -517,7 +421,6 @@ export default function WordTestPage() {
       setDraft(row.id, {
         status: "",
         wrongCount: "",
-        postponedDate: "",
       });
     } catch (e) {
       setErr(e?.message || "저장된 결과를 되돌리지 못했습니다.");
@@ -631,9 +534,8 @@ export default function WordTestPage() {
                         <td style={styles.historyResultTd}>
                           {(() => {
                             const draft = drafts[row.id] || {
-                              status: row.result?.result_status || "",
+                              status: ["pass", "fail"].includes(row.result?.result_status) ? row.result.result_status : "",
                               wrongCount: row.result?.wrong_count ?? "",
-                              postponedDate: row.result?.postponed_date || "",
                             };
                             const isBusy = busyId === row.id;
 
@@ -658,28 +560,9 @@ export default function WordTestPage() {
                                     />
                                     불통과
                                   </label>
-                                  <label style={draft.status === "absent" ? styles.historyAbsentChoiceActive : styles.historyChoice}>
-                                    <input
-                                      type="radio"
-                                      name={`history-status-${row.id}`}
-                                      checked={draft.status === "absent"}
-                                      onChange={() => setDraft(row.id, { status: "absent", wrongCount: "" })}
-                                    />
-                                    미응시
-                                  </label>
                                 </div>
                                 <div style={styles.historySaveRow}>
-                                  {draft.status === "absent" ? (
-                                    <input
-                                      type="date"
-                                      min={dayjs(row.todo_date).add(1, "day").format("YYYY-MM-DD")}
-                                      value={draft.postponedDate || ""}
-                                      onChange={(e) => setDraft(row.id, { postponedDate: e.target.value })}
-                                      style={styles.historyPostponedDateInput}
-                                      aria-label="연기 날짜"
-                                    />
-                                  ) : (
-                                    <div style={styles.historyMinusInputWrap}>
+                                  <div style={styles.historyMinusInputWrap}>
                                       <span style={styles.minus}>-</span>
                                       <input
                                         inputMode="numeric"
@@ -689,19 +572,16 @@ export default function WordTestPage() {
                                         style={styles.historyWrongInput}
                                       />
                                     </div>
-                                  )}
                                   <button type="button" disabled={isBusy} onClick={() => saveResult(row)} style={styles.historySaveButton(isBusy)}>
                                     저장
                                   </button>
                                 </div>
-                                {row.result ? (
+                                {row.result && ["pass", "fail"].includes(row.result.result_status) ? (
                                   <div style={styles.historySavedLine}>
                                     <span style={styles.savedText}>
                                       저장됨: {row.result.result_status === "pass"
                                         ? `통과 -${row.result.wrong_count}`
-                                        : row.result.result_status === "absent"
-                                          ? `미응시 · ${dayjs(row.result.postponed_date).format("YYYY.MM.DD")}로 연기`
-                                          : `불통과 -${row.result.wrong_count}`}
+                                        : `불통과 -${row.result.wrong_count}`}
                                     </span>
                                     <button
                                       type="button"
@@ -757,7 +637,7 @@ export default function WordTestPage() {
               </colgroup>
               <thead>
                 <tr>
-                  {["학생이름", "학교/학년", "담당선생님", "단어책", "범위", "시험개수", "커트라인", "뜻/스펠링/파포", "통과/불통과/미응시"].map((label) => (
+                  {["학생이름", "학교/학년", "담당선생님", "단어책", "범위", "시험개수", "커트라인", "뜻/스펠링/파포", "통과/불통과"].map((label) => (
                     <th key={label} style={styles.th}>{label}</th>
                   ))}
                 </tr>
@@ -769,7 +649,7 @@ export default function WordTestPage() {
                   <tr><td colSpan="9" style={styles.emptyCell}>이 날짜에 등록된 단어시험이 없습니다.</td></tr>
                 ) : (
                   rows.map((row) => {
-                    const draft = drafts[row.id] || { status: "", wrongCount: "", postponedDate: "" };
+                    const draft = drafts[row.id] || { status: "", wrongCount: "" };
                     const isBusy = busyId === row.id;
                     return (
                       <tr key={row.id}>
@@ -868,28 +748,9 @@ export default function WordTestPage() {
                                 />
                                 불통과
                               </label>
-                              <label style={draft.status === "absent" ? styles.absentChoiceActive : styles.choice}>
-                                <input
-                                  type="radio"
-                                  name={`status-${row.id}`}
-                                  checked={draft.status === "absent"}
-                                  onChange={() => setDraft(row.id, { status: "absent", wrongCount: "" })}
-                                />
-                                미응시
-                              </label>
                             </div>
                             <div style={styles.saveRow}>
-                              {draft.status === "absent" ? (
-                                <input
-                                  type="date"
-                                  min={dayjs(row.todo_date).add(1, "day").format("YYYY-MM-DD")}
-                                  value={draft.postponedDate || ""}
-                                  onChange={(e) => setDraft(row.id, { postponedDate: e.target.value })}
-                                  style={styles.postponedDateInput}
-                                  aria-label="연기 날짜"
-                                />
-                              ) : (
-                                <div style={styles.minusInputWrap}>
+                              <div style={styles.minusInputWrap}>
                                   <span style={styles.minus}>-</span>
                                   <input
                                     inputMode="numeric"
@@ -899,20 +760,17 @@ export default function WordTestPage() {
                                     style={styles.wrongInput}
                                   />
                                 </div>
-                              )}
                               <button type="button" disabled={isBusy} onClick={() => saveResult(row)} style={styles.saveButton(isBusy)}>
                                 저장
                               </button>
                             </div>
                           </div>
-                          {row.result ? (
+                          {row.result && ["pass", "fail"].includes(row.result.result_status) ? (
                             <div style={styles.savedLine}>
                               <span style={styles.savedText}>
                                 저장됨: {row.result.result_status === "pass"
-                                  ? `통과 -${row.result.wrong_count}`
-                                  : row.result.result_status === "absent"
-                                    ? `미응시 · ${dayjs(row.result.postponed_date).format("YYYY.MM.DD")}로 연기`
-                                    : `불통과 -${row.result.wrong_count}`}
+                                        ? `통과 -${row.result.wrong_count}`
+                                        : `불통과 -${row.result.wrong_count}`}
                               </span>
                               <button
                                 type="button"
@@ -991,18 +849,15 @@ const styles = {
   historyTdCenter: { padding: "7px 4px", borderBottom: `1px solid ${COLORS.lineSoft}`, borderRight: `1px solid ${COLORS.lineSoft}`, fontSize: 11, fontWeight: 800, textAlign: "center", wordBreak: "break-word" },
   passBadge: { display: "inline-block", padding: "3px 6px", borderRadius: 999, background: COLORS.greenSoft, color: COLORS.green, fontSize: 10.5, fontWeight: 1000 },
   failBadge: { display: "inline-block", padding: "3px 6px", borderRadius: 999, background: COLORS.redSoft, color: COLORS.red, fontSize: 10.5, fontWeight: 1000 },
-  absentBadge: { display: "inline-block", padding: "3px 6px", borderRadius: 999, background: COLORS.orangeSoft, color: COLORS.orange, fontSize: 10.5, fontWeight: 1000 },
   pendingBadge: { display: "inline-block", padding: "3px 6px", borderRadius: 999, background: "rgba(93,107,130,0.10)", color: COLORS.sub, fontSize: 10.5, fontWeight: 900 },
   historyResultTd: { padding: "6px 5px", borderBottom: `1px solid ${COLORS.lineSoft}`, borderRight: `1px solid ${COLORS.lineSoft}`, verticalAlign: "middle" },
   historyStatusRow: { display: "flex", alignItems: "center", gap: 3, minWidth: 0 },
   historyChoice: { flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 1, minWidth: 0, height: 26, padding: "0 2px", borderRadius: 7, border: `1px solid ${COLORS.line}`, background: "#fff", fontSize: 9.5, fontWeight: 900, cursor: "pointer", whiteSpace: "nowrap" },
   historyPassChoiceActive: { flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 1, minWidth: 0, height: 26, padding: "0 2px", borderRadius: 7, border: `1px solid rgba(19,115,51,0.35)`, background: COLORS.greenSoft, color: COLORS.green, fontSize: 9.5, fontWeight: 1000, cursor: "pointer", whiteSpace: "nowrap" },
   historyFailChoiceActive: { flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 1, minWidth: 0, height: 26, padding: "0 2px", borderRadius: 7, border: `1px solid rgba(180,35,24,0.35)`, background: COLORS.redSoft, color: COLORS.red, fontSize: 9.5, fontWeight: 1000, cursor: "pointer", whiteSpace: "nowrap" },
-  historyAbsentChoiceActive: { flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 1, minWidth: 0, height: 26, padding: "0 2px", borderRadius: 7, border: `1px solid rgba(180,83,9,0.35)`, background: COLORS.orangeSoft, color: COLORS.orange, fontSize: 9.5, fontWeight: 1000, cursor: "pointer", whiteSpace: "nowrap" },
   historySaveRow: { marginTop: 4, display: "flex", alignItems: "center", gap: 3, minWidth: 0 },
   historyMinusInputWrap: { flex: 1, minWidth: 38, height: 26, display: "flex", alignItems: "center", border: `1px solid ${COLORS.line}`, borderRadius: 7, background: "#fff", overflow: "hidden" },
   historyWrongInput: { width: "100%", minWidth: 0, height: "100%", border: 0, outline: 0, padding: "0 3px 0 1px", fontWeight: 900, fontSize: 10 },
-  historyPostponedDateInput: { flex: 1, minWidth: 0, height: 26, padding: "0 2px", border: `1px solid ${COLORS.line}`, borderRadius: 7, background: "#fff", fontWeight: 900, fontSize: 9 },
   historySaveButton: (disabled) => ({ height: 26, padding: "0 6px", borderRadius: 7, border: `1px solid ${COLORS.line}`, background: COLORS.blueSoft, color: COLORS.text, fontSize: 9.5, fontWeight: 1000, cursor: disabled ? "not-allowed" : "pointer", opacity: disabled ? 0.55 : 1 }),
   historySavedLine: { marginTop: 3, display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 4, minHeight: 16 },
   dateBar: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 14, flexWrap: "wrap", padding: "11px 13px", borderRadius: 16, border: `1px solid ${COLORS.lineSoft}`, background: "rgba(255,255,255,0.70)" },
@@ -1038,12 +893,10 @@ const styles = {
   choice: { flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 2, minWidth: 0, height: 30, padding: "0 3px", borderRadius: 8, border: `1px solid ${COLORS.line}`, background: "#fff", fontSize: 10.5, fontWeight: 900, cursor: "pointer", whiteSpace: "nowrap" },
   passChoiceActive: { flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 2, minWidth: 0, height: 30, padding: "0 3px", borderRadius: 8, border: `1px solid rgba(19,115,51,0.35)`, background: COLORS.greenSoft, color: COLORS.green, fontSize: 10.5, fontWeight: 1000, cursor: "pointer", whiteSpace: "nowrap" },
   failChoiceActive: { flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 2, minWidth: 0, height: 30, padding: "0 3px", borderRadius: 8, border: `1px solid rgba(180,35,24,0.35)`, background: COLORS.redSoft, color: COLORS.red, fontSize: 10.5, fontWeight: 1000, cursor: "pointer", whiteSpace: "nowrap" },
-  absentChoiceActive: { flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 2, minWidth: 0, height: 30, padding: "0 3px", borderRadius: 8, border: `1px solid rgba(180,83,9,0.35)`, background: COLORS.orangeSoft, color: COLORS.orange, fontSize: 10.5, fontWeight: 1000, cursor: "pointer", whiteSpace: "nowrap" },
   saveRow: { flex: "1 1 46%", display: "flex", gap: 4, minWidth: 0 },
   minusInputWrap: { flex: 1, minWidth: 44, height: 30, display: "flex", alignItems: "center", border: `1px solid ${COLORS.line}`, borderRadius: 8, background: "#fff", overflow: "hidden" },
   minus: { paddingLeft: 7, fontWeight: 1000, fontSize: 11 },
   wrongInput: { width: "100%", minWidth: 0, height: "100%", border: 0, outline: 0, padding: "0 4px 0 2px", fontWeight: 900, fontSize: 11 },
-  postponedDateInput: { flex: 1, minWidth: 112, height: 30, padding: "0 4px", border: `1px solid ${COLORS.line}`, borderRadius: 8, background: "#fff", fontWeight: 900, fontSize: 10.5 },
   saveButton: (disabled) => ({ height: 30, padding: "0 8px", borderRadius: 8, border: `1px solid ${COLORS.line}`, background: COLORS.blueSoft, color: COLORS.text, fontSize: 10.5, fontWeight: 1000, cursor: disabled ? "not-allowed" : "pointer", opacity: disabled ? 0.55 : 1 }),
   savedLine: { marginTop: 4, display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 6, minHeight: 18 },
   savedText: { fontSize: 9.5, color: COLORS.sub, fontWeight: 800, textAlign: "right" },

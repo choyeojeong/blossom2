@@ -128,6 +128,31 @@ function buildWordTestBlock() {
   ].join("\n");
 }
 
+function isWordTestTodo(text) {
+  const parts = String(text || "")
+    .split(",")
+    .map((part) => part.trim());
+
+  if (parts.length !== 5) return false;
+
+  const questionMatch = parts[2].match(/^(\d+)\s*문제$/);
+  const cutoffMatch = parts[3].match(/^-?(\d+)\s*컷$/);
+  const allowedKinds = new Set(["뜻", "스펠링", "파포"]);
+  const kinds = parts[4]
+    .split("/")
+    .map((kind) => kind.trim())
+    .filter(Boolean);
+
+  return Boolean(
+    parts[0] &&
+      parts[1] &&
+      questionMatch &&
+      cutoffMatch &&
+      kinds.length &&
+      kinds.every((kind) => allowedKinds.has(kind))
+  );
+}
+
 function IconButton({ title, onClick, children, danger = false }) {
   return (
     <button
@@ -210,6 +235,7 @@ export default function StudentDetailPage({ studentId: studentIdProp, onClose })
   const [endWeek, setEndWeek] = useState(clampMonday(defaultEnd));
 
   const [todosByDate, setTodosByDate] = useState({});
+  const [wordTestResultsByTodoId, setWordTestResultsByTodoId] = useState({});
   const [todoDraftByDate, setTodoDraftByDate] = useState({});
   const [editingId, setEditingId] = useState(null);
   const [editingText, setEditingText] = useState("");
@@ -304,6 +330,12 @@ export default function StudentDetailPage({ studentId: studentIdProp, onClose })
         next[d] = filtered;
       }
       return changed ? next : prev;
+    });
+    setWordTestResultsByTodoId((prev) => {
+      if (!(todoId in prev)) return prev;
+      const next = { ...prev };
+      delete next[todoId];
+      return next;
     });
     if (editingId === todoId) {
       setEditingId(null);
@@ -498,13 +530,36 @@ export default function StudentDetailPage({ studentId: studentIdProp, onClose })
 
     if (error) throw error;
 
+    const rows = data || [];
     const map = {};
-    for (const r of data || []) {
+    for (const r of rows) {
       const d = r.todo_date;
       if (!map[d]) map[d] = [];
       map[d].push({ id: r.id, text: r.text || "", order_index: r.order_index ?? 0 });
     }
     setTodosByDate(map);
+
+    const todoIds = rows.map((r) => r.id).filter(Boolean);
+    if (!todoIds.length) {
+      setWordTestResultsByTodoId({});
+      return;
+    }
+
+    const { data: resultRows, error: resultError } = await supabase
+      .from("word_test_results")
+      .select("todo_id, result_status")
+      .in("todo_id", todoIds);
+
+    if (resultError) throw resultError;
+
+    const resultMap = {};
+    for (const r of resultRows || []) {
+      if (!r?.todo_id) continue;
+      if (r.result_status === "pass" || r.result_status === "fail") {
+        resultMap[r.todo_id] = r.result_status;
+      }
+    }
+    setWordTestResultsByTodoId(resultMap);
   }
 
   async function loadEventsInRange(fromIso, toIso) {
@@ -748,6 +803,27 @@ export default function StudentDetailPage({ studentId: studentIdProp, onClose })
           }
         }
       )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "word_test_results", filter: `student_id=eq.${studentId}` },
+        (payload) => {
+          const type = payload.eventType;
+          const row = payload.new || payload.old;
+          const todoId = row?.todo_id;
+          if (!todoId) return;
+
+          setWordTestResultsByTodoId((prev) => {
+            if (type === "DELETE" || !["pass", "fail"].includes(payload.new?.result_status)) {
+              if (!(todoId in prev)) return prev;
+              const next = { ...prev };
+              delete next[todoId];
+              return next;
+            }
+
+            return { ...prev, [todoId]: payload.new.result_status };
+          });
+        }
+      )
       .subscribe();
 
     return () => {
@@ -980,6 +1056,12 @@ export default function StudentDetailPage({ studentId: studentIdProp, onClose })
       setTodosByDate((prev) => {
         const arr = (prev[dateIso] || []).filter((x) => x.id !== todoId);
         return { ...prev, [dateIso]: arr };
+      });
+      setWordTestResultsByTodoId((prev) => {
+        if (!(todoId in prev)) return prev;
+        const next = { ...prev };
+        delete next[todoId];
+        return next;
       });
 
       if (editingId === todoId) {
@@ -1358,16 +1440,32 @@ export default function StudentDetailPage({ studentId: studentIdProp, onClose })
     whiteSpace: "nowrap",
   };
 
-  const todoItem = {
-    display: "flex",
-    alignItems: "flex-start",
-    gap: 8,
-    padding: "8px 9px",
-    borderRadius: 12,
-    border: `1px solid ${COLORS.lineSoft}`,
-    background: "rgba(255,255,255,0.9)",
-    cursor: "grab",
-    userSelect: "none",
+  const todoItem = (todo) => {
+    const isWordTest = isWordTestTodo(todo?.text);
+    const resultStatus = isWordTest ? wordTestResultsByTodoId[todo?.id] || "" : "";
+
+    let border = `1px solid ${COLORS.lineSoft}`;
+    let background = "rgba(255,255,255,0.9)";
+
+    if (resultStatus === "pass") {
+      border = "1px solid rgba(31,111,235,0.42)";
+      background = "rgba(90,167,255,0.18)";
+    } else if (resultStatus === "fail") {
+      border = "1px solid rgba(220,53,69,0.40)";
+      background = "rgba(255,99,99,0.16)";
+    }
+
+    return {
+      display: "flex",
+      alignItems: "flex-start",
+      gap: 8,
+      padding: "8px 9px",
+      borderRadius: 12,
+      border,
+      background,
+      cursor: "grab",
+      userSelect: "none",
+    };
   };
 
   const todoTextWrap = {
@@ -1592,7 +1690,7 @@ export default function StudentDetailPage({ studentId: studentIdProp, onClose })
                           return (
                             <div
                               key={t.id}
-                              style={todoItem}
+                              style={todoItem(t)}
                               draggable
                               onDragStart={() => onDragStart(t.id, dIso)}
                               onDragEnd={onDragEnd}
