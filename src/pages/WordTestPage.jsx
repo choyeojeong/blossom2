@@ -80,6 +80,25 @@ function normalizeWrongCount(value) {
   return Number.isFinite(number) ? Math.abs(number) : null;
 }
 
+function splitMultiValue(value) {
+  return String(value || "")
+    .split(/\s+\+\s+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function MultiLineValue({ value }) {
+  const items = splitMultiValue(value);
+  if (!items.length) return "-";
+  return (
+    <div style={{ display: "grid", gap: 4 }}>
+      {items.map((item, index) => (
+        <div key={`${item}-${index}`}>{item}</div>
+      ))}
+    </div>
+  );
+}
+
 export default function WordTestPage() {
   const [dateStr, setDateStr] = useState(dayjs().format("YYYY-MM-DD"));
   const [rows, setRows] = useState([]);
@@ -522,15 +541,15 @@ export default function WordTestPage() {
                           )}
                         </td>
                         <td style={styles.historyTd}>{row.student ? `${row.student.school || "-"} / ${row.student.grade || "-"}` : "-"}</td>
-                        <td style={styles.historyTd}>{row.wordTest.book}</td>
+                        <td style={styles.historyTd}><MultiLineValue value={row.wordTest.book} /></td>
                         <td style={styles.historyTdCenter}>
                           {row.wordTest.isRangeModified ? (
                             <div style={styles.rangeHistoryWrap}>
-                              <span style={styles.originalRangeText}>기존 {row.wordTest.originalRange}</span>
-                              <span style={styles.changedRangeText}>수정 {row.wordTest.currentRange}</span>
+                              <span style={styles.originalRangeText}>기존 <MultiLineValue value={row.wordTest.originalRange} /></span>
+                              <span style={styles.changedRangeText}>수정 <MultiLineValue value={row.wordTest.currentRange} /></span>
                             </div>
                           ) : (
-                            row.wordTest.currentRange
+                            <MultiLineValue value={row.wordTest.currentRange} />
                           )}
                         </td>
                         <td style={styles.historyTdCenter}>{row.wordTest.questionCount}</td>
@@ -674,7 +693,7 @@ export default function WordTestPage() {
                         </td>
                         <td style={styles.td}>{row.student ? `${row.student.school || "-"} / ${row.student.grade || "-"}` : "-"}</td>
                         <td style={styles.td}>{row.student?.teacher_name || "-"}</td>
-                        <td style={styles.td}>{row.wordTest.book}</td>
+                        <td style={styles.td}><MultiLineValue value={row.wordTest.book} /></td>
                         <td style={styles.rangeTd}>
                           {editingRangeId === row.id ? (
                             <div style={styles.rangeEditBox}>
@@ -712,11 +731,11 @@ export default function WordTestPage() {
                             <div style={styles.rangeDisplay}>
                               {row.wordTest.isRangeModified ? (
                                 <>
-                                  <span style={styles.originalRangeText}>기존 {row.wordTest.originalRange}</span>
-                                  <span style={styles.changedRangeText}>수정 {row.wordTest.currentRange}</span>
+                                  <span style={styles.originalRangeText}>기존 <MultiLineValue value={row.wordTest.originalRange} /></span>
+                                  <span style={styles.changedRangeText}>수정 <MultiLineValue value={row.wordTest.currentRange} /></span>
                                 </>
                               ) : (
-                                <span style={styles.currentRangeText}>{row.wordTest.currentRange}</span>
+                                <span style={styles.currentRangeText}><MultiLineValue value={row.wordTest.currentRange} /></span>
                               )}
                               <button
                                 type="button"

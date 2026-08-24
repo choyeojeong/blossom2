@@ -246,6 +246,9 @@ export default function StudentDetailPage({ studentId: studentIdProp, onClose })
   const [wordTestForm, setWordTestForm] = useState({
     book: "",
     range: "",
+    useSecondBook: false,
+    book2: "",
+    range2: "",
     questionCount: "60",
     cutoff: "3",
     kinds: { meaning: true, spelling: false, parts: true },
@@ -890,6 +893,9 @@ export default function StudentDetailPage({ studentId: studentIdProp, onClose })
     setWordTestForm({
       book: "",
       range: "",
+      useSecondBook: false,
+      book2: "",
+      range2: "",
       questionCount: "60",
       cutoff: "3",
       kinds: { meaning: true, spelling: false, parts: true },
@@ -963,6 +969,9 @@ export default function StudentDetailPage({ studentId: studentIdProp, onClose })
 
     const book = String(wordTestForm.book || "").trim();
     const range = String(wordTestForm.range || "").trim();
+    const useSecondBook = Boolean(wordTestForm.useSecondBook);
+    const book2 = String(wordTestForm.book2 || "").trim();
+    const range2 = String(wordTestForm.range2 || "").trim();
     const questionCount = Number(String(wordTestForm.questionCount || "").replace(/[^0-9]/g, ""));
     const cutoff = Number(String(wordTestForm.cutoff || "").replace(/[^0-9]/g, ""));
     const kinds = [
@@ -979,6 +988,14 @@ export default function StudentDetailPage({ studentId: studentIdProp, onClose })
       alert("범위를 입력해주세요.");
       return;
     }
+    if (useSecondBook && !book2) {
+      alert("두 번째 단어책을 입력해주세요.");
+      return;
+    }
+    if (useSecondBook && !range2) {
+      alert("두 번째 단어책의 범위를 입력해주세요.");
+      return;
+    }
     if (!Number.isFinite(questionCount) || questionCount <= 0) {
       alert("시험개수를 숫자로 입력해주세요.");
       return;
@@ -992,7 +1009,9 @@ export default function StudentDetailPage({ studentId: studentIdProp, onClose })
       return;
     }
 
-    const text = `${book}, ${range}, ${questionCount}문제, -${cutoff}컷, ${kinds.join("/")}`;
+    const bookText = useSecondBook ? `${book} + ${book2}` : book;
+    const rangeText = useSecondBook ? `${range} + ${range2}` : range;
+    const text = `${bookText}, ${rangeText}, ${questionCount}문제, -${cutoff}컷, ${kinds.join("/")}`;
 
     setWordTestSaving(true);
     setErr("");
@@ -2084,6 +2103,66 @@ export default function StudentDetailPage({ studentId: studentIdProp, onClose })
                 />
               </label>
 
+              {!wordTestForm.useSecondBook ? (
+                <button
+                  type="button"
+                  onClick={() => setWordTestForm((prev) => ({ ...prev, useSecondBook: true }))}
+                  style={{ ...btnGhost, height: 38, width: "100%", fontWeight: 1000 }}
+                >
+                  + 단어책 추가
+                </button>
+              ) : (
+                <div style={{ display: "grid", gap: 10, padding: 12, border: `1px solid ${COLORS.line}`, borderRadius: 14, background: "rgba(47,111,237,0.035)" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+                    <span style={{ fontSize: 12, color: COLORS.sub, fontWeight: 1000 }}>두 번째 단어책</span>
+                    <button
+                      type="button"
+                      onClick={() => setWordTestForm((prev) => ({ ...prev, useSecondBook: false, book2: "", range2: "" }))}
+                      style={{ border: 0, background: "transparent", color: COLORS.sub, cursor: "pointer", fontWeight: 900 }}
+                    >
+                      삭제
+                    </button>
+                  </div>
+                  <input
+                    value={wordTestForm.book2}
+                    onChange={(e) => setWordTestForm((prev) => ({ ...prev, book2: e.target.value }))}
+                    placeholder="두 번째 단어책 직접 입력 또는 아래 목록에서 선택"
+                    style={{ ...tinyInput, width: "100%" }}
+                  />
+                  <select
+                    value={WORD_TEST_BOOK_OPTIONS.includes(wordTestForm.book2) ? wordTestForm.book2 : ""}
+                    onChange={(e) => {
+                      if (!e.target.value) return;
+                      setWordTestForm((prev) => ({ ...prev, book2: e.target.value }));
+                    }}
+                    style={{
+                      ...tinyInput,
+                      width: "100%",
+                      color: WORD_TEST_BOOK_OPTIONS.includes(wordTestForm.book2) ? COLORS.text : COLORS.sub,
+                      background: "rgba(31,42,68,0.035)",
+                      cursor: "pointer",
+                    }}
+                    aria-label="두 번째 단어책 목록에서 선택"
+                  >
+                    <option value="">책 목록에서 선택</option>
+                    {WORD_TEST_BOOK_OPTIONS.map((bookName) => (
+                      <option key={`second-${bookName}`} value={bookName}>
+                        {bookName}
+                      </option>
+                    ))}
+                  </select>
+                  <label style={{ display: "grid", gap: 6 }}>
+                    <span style={{ fontSize: 12, color: COLORS.sub, fontWeight: 1000 }}>두 번째 범위</span>
+                    <input
+                      value={wordTestForm.range2}
+                      onChange={(e) => setWordTestForm((prev) => ({ ...prev, range2: e.target.value }))}
+                      placeholder="예: 41-42"
+                      style={{ ...tinyInput, width: "100%" }}
+                    />
+                  </label>
+                </div>
+              )}
+
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
                 <label style={{ display: "grid", gap: 6 }}>
                   <span style={{ fontSize: 12, color: COLORS.sub, fontWeight: 1000 }}>시험개수</span>
@@ -2147,7 +2226,7 @@ export default function StudentDetailPage({ studentId: studentIdProp, onClose })
               </div>
 
               <div style={{ padding: "10px 12px", borderRadius: 12, background: "rgba(31,42,68,0.04)", color: COLORS.sub, fontSize: 12, fontWeight: 800 }}>
-                등록 예시: 워마고등베이직, 6-10, 60문제, -3컷, 뜻/파포
+                등록 예시: 워마고등베이직 1-2 + 워마수능2000 41-42 → 총 60문제, -3컷
               </div>
             </div>
 
