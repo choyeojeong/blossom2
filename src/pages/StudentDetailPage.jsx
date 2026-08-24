@@ -129,25 +129,26 @@ function buildWordTestBlock() {
 }
 
 function isWordTestTodo(text) {
-  const parts = String(text || "")
-    .split(",")
-    .map((part) => part.trim());
+  // 범위에는 쉼표를 포함해 어떤 형식이든 허용한다.
+  // 예: 1-2 / 1,2 / 1~2과 / 일과이과
+  // 뒤쪽의 "문제수, 커트라인, 시험종류" 형식을 기준으로 단어시험 여부를 판별한다.
+  const match = String(text || "")
+    .trim()
+    .match(/^(.+?),\s*(.+),\s*(\d+)\s*문제\s*,\s*(-?\d+)\s*컷\s*,\s*(.+)$/);
 
-  if (parts.length !== 5) return false;
+  if (!match) return false;
 
-  const questionMatch = parts[2].match(/^(\d+)\s*문제$/);
-  const cutoffMatch = parts[3].match(/^-?(\d+)\s*컷$/);
+  const book = String(match[1] || "").trim();
+  const range = String(match[2] || "").trim();
   const allowedKinds = new Set(["뜻", "스펠링", "파포"]);
-  const kinds = parts[4]
+  const kinds = String(match[5] || "")
     .split("/")
     .map((kind) => kind.trim())
     .filter(Boolean);
 
   return Boolean(
-    parts[0] &&
-      parts[1] &&
-      questionMatch &&
-      cutoffMatch &&
+    book &&
+      range &&
       kinds.length &&
       kinds.every((kind) => allowedKinds.has(kind))
   );

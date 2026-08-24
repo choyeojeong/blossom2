@@ -22,37 +22,42 @@ const COLORS = {
 };
 
 function parseWordTest(text) {
-  const parts = String(text || "")
-    .split(",")
-    .map((part) => part.trim());
+  // 범위에는 쉼표를 포함해 어떤 형식이든 허용한다.
+  // 예: 1-2 / 1,2 / 1~2과 / 일과이과
+  // 뒤쪽의 "문제수, 커트라인, 시험종류"를 기준으로 각 항목을 분리한다.
+  const match = String(text || "")
+    .trim()
+    .match(/^(.+?),\s*(.+),\s*(\d+)\s*문제\s*,\s*(-?\d+)\s*컷\s*,\s*(.+)$/);
 
-  if (parts.length !== 5) return null;
+  if (!match) return null;
 
-  const questionMatch = parts[2].match(/^(\d+)\s*문제$/);
-  const cutoffMatch = parts[3].match(/^-?(\d+)\s*컷$/);
+  const book = String(match[1] || "").trim();
+  const rangeText = String(match[2] || "").trim();
+  const questionCount = Number(match[3]);
+  const cutoff = -Math.abs(Number(match[4]));
   const allowedKinds = new Set(["뜻", "스펠링", "파포"]);
-  const kinds = parts[4]
+  const kinds = String(match[5] || "")
     .split("/")
     .map((kind) => kind.trim())
     .filter(Boolean);
 
-  if (!parts[0] || !parts[1] || !questionMatch || !cutoffMatch || !kinds.length) return null;
+  if (!book || !rangeText || !Number.isFinite(questionCount) || !kinds.length) return null;
   if (kinds.some((kind) => !allowedKinds.has(kind))) return null;
 
-  const rangeMatch = parts[1].match(/^(.*?)\s*\(수정:\s*(.*?)\)\s*$/);
-  const originalRange = String(rangeMatch?.[1] || parts[1]).trim();
-  const currentRange = String(rangeMatch?.[2] || parts[1]).trim();
+  const rangeMatch = rangeText.match(/^(.*?)\s*\(수정:\s*(.*?)\)\s*$/);
+  const originalRange = String(rangeMatch?.[1] || rangeText).trim();
+  const currentRange = String(rangeMatch?.[2] || rangeText).trim();
 
   if (!originalRange || !currentRange) return null;
 
   return {
-    book: parts[0],
+    book,
     range: currentRange,
     originalRange,
     currentRange,
     isRangeModified: originalRange !== currentRange,
-    questionCount: Number(questionMatch[1]),
-    cutoff: -Math.abs(Number(cutoffMatch[1])),
+    questionCount,
+    cutoff,
     kinds: kinds.join("/"),
   };
 }
