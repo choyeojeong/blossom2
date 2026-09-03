@@ -543,13 +543,57 @@ export default function WordTestPage() {
                         <td style={styles.historyTd}>{row.student ? `${row.student.school || "-"} / ${row.student.grade || "-"}` : "-"}</td>
                         <td style={styles.historyTd}><MultiLineValue value={row.wordTest.book} /></td>
                         <td style={styles.historyTdCenter}>
-                          {row.wordTest.isRangeModified ? (
-                            <div style={styles.rangeHistoryWrap}>
-                              <span style={styles.originalRangeText}>기존 <MultiLineValue value={row.wordTest.originalRange} /></span>
-                              <span style={styles.changedRangeText}>수정 <MultiLineValue value={row.wordTest.currentRange} /></span>
+                          {editingRangeId === row.id ? (
+                            <div style={styles.rangeEditBox}>
+                              <input
+                                value={rangeDraft}
+                                onChange={(e) => setRangeDraft(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter") saveRangeEdit(row);
+                                  if (e.key === "Escape") cancelRangeEdit();
+                                }}
+                                placeholder="수정 범위"
+                                style={styles.rangeInput}
+                                autoFocus
+                              />
+                              <div style={styles.rangeEditActions}>
+                                <button
+                                  type="button"
+                                  onClick={() => saveRangeEdit(row)}
+                                  disabled={busyId === row.id}
+                                  style={styles.rangeSaveButton(busyId === row.id)}
+                                >
+                                  저장
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={cancelRangeEdit}
+                                  disabled={busyId === row.id}
+                                  style={styles.rangeCancelButton(busyId === row.id)}
+                                >
+                                  취소
+                                </button>
+                              </div>
                             </div>
                           ) : (
-                            <MultiLineValue value={row.wordTest.currentRange} />
+                            <div style={styles.rangeDisplay}>
+                              {row.wordTest.isRangeModified ? (
+                                <>
+                                  <span style={styles.originalRangeText}>기존 <MultiLineValue value={row.wordTest.originalRange} /></span>
+                                  <span style={styles.changedRangeText}>수정 <MultiLineValue value={row.wordTest.currentRange} /></span>
+                                </>
+                              ) : (
+                                <span style={styles.currentRangeText}><MultiLineValue value={row.wordTest.currentRange} /></span>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() => startRangeEdit(row)}
+                                disabled={busyId === row.id}
+                                style={styles.rangeEditButton(busyId === row.id)}
+                              >
+                                수정
+                              </button>
+                            </div>
                           )}
                         </td>
                         <td style={styles.historyTdCenter}>{row.wordTest.questionCount}</td>
