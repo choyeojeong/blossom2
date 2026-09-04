@@ -183,12 +183,12 @@ export default function WordTestPage() {
           student: studentMap.get(todo.student_id) || null,
           result: resultMap.get(todo.id) || null,
         }))
-        .sort((a, b) => {
-          const teacherCompare = String(a.student?.teacher_name || "").localeCompare(String(b.student?.teacher_name || ""), "ko");
-          if (teacherCompare !== 0) return teacherCompare;
-          return String(a.student?.name || "").localeCompare(String(b.student?.name || ""), "ko");
-        });
-
+.sort((a, b) =>
+  String(a.student?.name || "").localeCompare(
+    String(b.student?.name || ""),
+    "ko"
+  )
+);
       const nextDrafts = {};
       nextRows.forEach((row) => {
         nextDrafts[row.id] = {
