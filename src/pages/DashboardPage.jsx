@@ -3,8 +3,8 @@ import { useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 
 const COLORS = {
-  bgTop: "#eef4ff", // 연파랑
-  bgBottom: "#f7f9fc", // 연회색
+  bgTop: "#eef4ff",
+  bgBottom: "#f7f9fc",
   text: "#1f2a44",
   sub: "#5d6b82",
   border: "#d9e3f7",
@@ -15,11 +15,6 @@ const COLORS = {
 export default function DashboardPage() {
   const nav = useNavigate();
 
-  // 학생관리 | 일대일시간표
-  // 성적관리 | 독해시간표
-  // 강의관리 | 출결현황
-  // 학부모연락양식 | 키오스크
-  // 상담관리 | 단어시험
   const actions = useMemo(
     () => [
       { label: "학생관리", to: "/students" },
@@ -29,7 +24,7 @@ export default function DashboardPage() {
       { label: "독해시간표", to: "/reading" },
 
       { label: "강의관리", to: "/lectures" },
-      { label: "출결현황", to: "/attendance" },
+      { label: "중3단어대전", to: "/word-battle" },
 
       { label: "학부모연락양식", to: "/contact-forms" },
       { label: "키오스크", to: "/kiosk" },
@@ -58,27 +53,27 @@ export default function DashboardPage() {
           <div style={styles.desc}>메뉴를 선택해주세요</div>
 
           <div style={styles.grid}>
-            {actions.map((a) => (
+            {actions.map((action) => (
               <button
-                key={a.label}
+                key={action.label}
                 type="button"
-                onClick={() => nav(a.to)}
+                onClick={() => nav(action.to)}
                 style={styles.menuBtn}
-                title={a.label}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.background = COLORS.btnHover;
+                title={action.label}
+                onMouseEnter={(event) => {
+                  event.currentTarget.style.background = COLORS.btnHover;
                 }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.background = COLORS.btnBg;
+                onMouseLeave={(event) => {
+                  event.currentTarget.style.background = COLORS.btnBg;
                 }}
-                onMouseDown={(e) => {
-                  e.currentTarget.style.transform = "scale(0.985)";
+                onMouseDown={(event) => {
+                  event.currentTarget.style.transform = "scale(0.985)";
                 }}
-                onMouseUp={(e) => {
-                  e.currentTarget.style.transform = "scale(1)";
+                onMouseUp={(event) => {
+                  event.currentTarget.style.transform = "scale(1)";
                 }}
               >
-                {a.label}
+                {action.label}
               </button>
             ))}
           </div>
