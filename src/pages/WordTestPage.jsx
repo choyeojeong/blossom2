@@ -386,11 +386,41 @@ export default function WordTestPage() {
     setBusyId(row.id);
     setErr("");
 
+    const savedDate = dayjs().format("YYYY-MM-DD");
+    const isFirstResult = !["pass", "fail"].includes(row.result?.result_status);
+    const shouldMoveToSavedDate = isFirstResult && row.todo_date !== savedDate;
+    let movedTodo = null;
+
     try {
+      if (shouldMoveToSavedDate) {
+        const { data: targetDateRows, error: targetDateError } = await supabase
+          .from("student_todos")
+          .select("order_index")
+          .eq("student_id", row.student_id)
+          .eq("todo_date", savedDate);
+
+        if (targetDateError) throw targetDateError;
+
+        const nextOrderIndex = (targetDateRows || []).length
+          ? Math.max(...targetDateRows.map((item) => Number(item.order_index) || 0)) + 1
+          : 0;
+
+        const { data: updatedTodo, error: moveError } = await supabase
+          .from("student_todos")
+          .update({ todo_date: savedDate, order_index: nextOrderIndex })
+          .eq("id", row.id)
+          .eq("todo_date", row.todo_date)
+          .select("id, student_id, todo_date, text, order_index, created_at")
+          .single();
+
+        if (moveError) throw moveError;
+        movedTodo = updatedTodo;
+      }
+
       const payload = {
         todo_id: row.id,
         student_id: row.student_id,
-        test_date: row.todo_date,
+        test_date: shouldMoveToSavedDate ? savedDate : row.todo_date,
         result_status: draft.status,
         wrong_count: wrongCount,
         updated_at: new Date().toISOString(),
@@ -404,13 +434,49 @@ export default function WordTestPage() {
 
       if (error) throw error;
 
-      setRows((prev) => prev.map((item) => (item.id === row.id ? { ...item, result: data } : item)));
-      setHistoryRows((prev) => prev.map((item) => (item.id === row.id ? { ...item, result: data } : item)));
+      setRows((prev) => {
+        if (shouldMoveToSavedDate && dateStr !== savedDate) {
+          return prev.filter((item) => item.id !== row.id);
+        }
+
+        return prev.map((item) =>
+          item.id === row.id
+            ? { ...item, ...(movedTodo || {}), result: data }
+            : item
+        );
+      });
+
+      setHistoryRows((prev) =>
+        prev
+          .map((item) =>
+            item.id === row.id
+              ? { ...item, ...(movedTodo || {}), result: data }
+              : item
+          )
+          .sort((a, b) => {
+            const dateCompare = String(b.todo_date || "").localeCompare(String(a.todo_date || ""));
+            if (dateCompare !== 0) return dateCompare;
+            return String(b.created_at || "").localeCompare(String(a.created_at || ""));
+          })
+      );
+
       setDraft(row.id, {
         status: data.result_status,
         wrongCount: data.wrong_count ?? "",
       });
     } catch (e) {
+      if (movedTodo) {
+        const { error: rollbackError } = await supabase
+          .from("student_todos")
+          .update({ todo_date: row.todo_date, order_index: row.order_index ?? 0 })
+          .eq("id", row.id);
+
+        if (rollbackError) {
+          setErr("채점 결과 저장에 실패했고 시험 날짜도 자동 복구하지 못했습니다. 새로고침 후 확인해주세요.");
+          return;
+        }
+      }
+
       setErr(e?.message || "채점 결과 저장에 실패했습니다.");
     } finally {
       setBusyId("");

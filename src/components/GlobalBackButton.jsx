@@ -4,8 +4,8 @@ export default function GlobalBackButton() {
   const nav = useNavigate();
   const { pathname } = useLocation();
 
-  // ✅ 뒤로가기 버튼 숨길 경로
-  const HIDE_PATHS = ["/", "/dashboard"];
+  // 로그인 화면, 대시보드 자체, 학생용 표시 화면에서는 숨긴다.
+  const HIDE_PATHS = ["/", "/dashboard", "/word-battle/display"];
   if (HIDE_PATHS.includes(pathname)) return null;
 
   function goBack() {
@@ -14,39 +14,54 @@ export default function GlobalBackButton() {
   }
 
   return (
-    <button
-      type="button"
-      onClick={goBack}
-      aria-label="뒤로가기"
-      title="뒤로가기"
+    <div
+      aria-label="페이지 이동 버튼"
       style={{
         position: "fixed",
         zIndex: 999999,
         left: 12,
-
-        /**
-         * ✅ iPhone Safe Area 완전 대응
-         * - safe-area-inset-top : 노치 + 상태바
-         * - + 12px : 버튼과 상태바 사이 여유
-         * 👉 결과적으로 아이폰에서 "확실히 내려온 위치"
-         */
         top: "calc(env(safe-area-inset-top, 0px) + 12px)",
-
-        height: 36,
-        minWidth: 36,
-        padding: "0 12px",
-        borderRadius: 999,
-        border: "1px solid rgba(0,0,0,0.12)",
-        background: "rgba(255,255,255,0.92)",
-        color: "#1f2a44",
-        fontWeight: 800,
-        cursor: "pointer",
-        boxShadow: "0 8px 20px rgba(0,0,0,0.08)",
-        backdropFilter: "blur(6px)",
-        WebkitBackdropFilter: "blur(6px)",
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
       }}
     >
-      ←
-    </button>
+      <button
+        type="button"
+        onClick={goBack}
+        aria-label="뒤로가기"
+        title="뒤로가기"
+        style={buttonStyle}
+      >
+        ←
+      </button>
+
+      <button
+        type="button"
+        onClick={() => nav("/dashboard")}
+        aria-label="대시보드로 이동"
+        title="대시보드로 이동"
+        style={{ ...buttonStyle, padding: "0 14px" }}
+      >
+        ⌂ 대시보드
+      </button>
+    </div>
   );
 }
+
+const buttonStyle = {
+  height: 38,
+  minWidth: 38,
+  padding: "0 12px",
+  borderRadius: 999,
+  border: "1px solid rgba(31,42,68,0.16)",
+  background: "rgba(255,255,255,0.94)",
+  color: "#1f2a44",
+  fontSize: 13,
+  fontWeight: 900,
+  whiteSpace: "nowrap",
+  cursor: "pointer",
+  boxShadow: "0 8px 20px rgba(0,0,0,0.10)",
+  backdropFilter: "blur(8px)",
+  WebkitBackdropFilter: "blur(8px)",
+};
