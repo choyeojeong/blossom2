@@ -85,6 +85,22 @@ function buildWinterSummary(row, extrasWinter) {
   return `일대일: ${oto} · 독해: ${read} · 추가: ${extra}`;
 }
 
+function getCurrentMonth() {
+  const now = new Date();
+  return `${now.getFullYear()}-${pad2(now.getMonth() + 1)}`;
+}
+
+// 첫수업일~퇴원일이 선택한 월과 하루라도 겹치면 포함합니다.
+function attendedInMonth(student, month) {
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) return false;
+  const [year, monthNumber] = month.split("-").map(Number);
+  const firstDay = `${month}-01`;
+  const lastDay = `${month}-${pad2(new Date(year, monthNumber, 0).getDate())}`;
+  const start = String(student.first_lesson_date || "").slice(0, 10);
+  const end = String(student.withdrawal_date || "").slice(0, 10);
+  return (!start || start <= lastDay) && (!end || end >= firstDay);
+}
+
 // 추가 패키지 없이 실제 .xlsx 파일을 생성합니다. 모든 셀은 문자열로 저장합니다.
 function buildStudentsXlsx(students, season) {
   const xml = (value) => String(value ?? "")
@@ -92,7 +108,7 @@ function buildStudentsXlsx(students, season) {
     .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;").replace(/'/g, "&apos;");
   const values = [
-    ["이름", "학교학년", "학생휴대폰번호", "일대일요일", "일대일수업시간", "독해요일", "독해수업시간"],
+    ["이름", "학교학년", "학생휴대폰번호", "일대일요일", "일대일수업시간", "독해요일", "독해수업시간", "담당선생님"],
     ...students.map((r) => [
       r.name || "",
       [r.school, r.grade].filter(Boolean).join(" "),
@@ -101,6 +117,7 @@ function buildStudentsXlsx(students, season) {
       String(r[`${season}_oto_class_time`] || "").slice(0, 5),
       weekdayLabel(r[`${season}_read_weekday`]),
       String(r[`${season}_read_class_time`] || "").slice(0, 5),
+      r.teacher_name || "",
     ]),
   ];
   const sheetRows = values.map((row, index) =>
@@ -113,7 +130,7 @@ function buildStudentsXlsx(students, season) {
     ["_rels/.rels", '<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>'],
     ["xl/workbook.xml", '<?xml version="1.0" encoding="UTF-8"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="재원생 목록" sheetId="1" r:id="rId1"/></sheets></workbook>'],
     ["xl/_rels/workbook.xml.rels", '<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>'],
-    ["xl/worksheets/sheet1.xml", `<?xml version="1.0" encoding="UTF-8"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews><cols><col min="1" max="1" width="16" customWidth="1"/><col min="2" max="2" width="28" customWidth="1"/><col min="3" max="3" width="20" customWidth="1"/><col min="4" max="7" width="20" customWidth="1"/></cols><sheetData>${sheetRows}</sheetData><autoFilter ref="A1:G${values.length}"/></worksheet>`],
+    ["xl/worksheets/sheet1.xml", `<?xml version="1.0" encoding="UTF-8"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews><cols><col min="1" max="1" width="16" customWidth="1"/><col min="2" max="2" width="28" customWidth="1"/><col min="3" max="3" width="20" customWidth="1"/><col min="4" max="8" width="20" customWidth="1"/></cols><sheetData>${sheetRows}</sheetData><autoFilter ref="A1:H${values.length}"/></worksheet>`],
   ];
   const encoder = new TextEncoder();
   const parts = [];
@@ -357,6 +374,7 @@ export default function StudentsPage({
   const [extrasByStudent, setExtrasByStudent] = useState({}); // { id: { term:{}, winter:{} } }
 
   const [q, setQ] = useState("");
+  const [exportMonth, setExportMonth] = useState(getCurrentMonth);
 
   const [withdrawModal, setWithdrawModal] = useState({ open: false, student: null, date: "" });
 
@@ -399,12 +417,16 @@ export default function StudentsPage({
     }
   }
 
-  function exportActiveStudents() {
+  function exportMonthlyStudents() {
     try {
-      const students = rows.filter((r) => !r.withdrawal_date)
+      if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(exportMonth)) {
+        toast("정산월을 선택해주세요.", true);
+        return;
+      }
+      const students = rows.filter((r) => attendedInMonth(r, exportMonth))
         .sort((a, b) => (a.name || "").localeCompare(b.name || "", "ko"));
       if (!students.length) {
-        toast("내보낼 재원생이 없습니다.", true);
+        toast("선택한 월에 다닌 학생이 없습니다.", true);
         return;
       }
       const blob = buildStudentsXlsx(students, "term");
@@ -413,7 +435,7 @@ export default function StudentsPage({
       const now = new Date();
       const date = `${now.getFullYear()}${pad2(now.getMonth() + 1)}${pad2(now.getDate())}`;
       link.href = url;
-      link.download = `재원생목록_학기중_${date}.xlsx`;
+      link.download = `급여정산_학생목록_${exportMonth}_학기중_${date}.xlsx`;
       document.body.appendChild(link);
       try {
         link.click();
@@ -421,7 +443,7 @@ export default function StudentsPage({
         link.remove();
         setTimeout(() => URL.revokeObjectURL(url), 1000);
       }
-      toast(`재원생 ${students.length}명 엑셀 내보내기 완료`);
+      toast(`${exportMonth} 학생 ${students.length}명 엑셀 내보내기 완료`);
     } catch (e) {
       console.error(e);
       toast(e?.message || "엑셀 내보내기 실패", true);
@@ -1105,10 +1127,11 @@ export default function StudentsPage({
         {/* 학생 목록 */}
         <SectionTitle title="학생 목록" desc="이름순 · 번호 · 만능 검색" />
         <div style={{ display: "flex", alignItems: "flex-end", gap: 10, marginTop: 12, flexWrap: "wrap" }}>
-          <Button variant="soft" onClick={exportActiveStudents} disabled={loading || busy}>
-            재원생 엑셀 내보내기
+          <Input label="정산월" type="month" value={exportMonth} onChange={(e) => setExportMonth(e.target.value)} />
+          <Button variant="soft" onClick={exportMonthlyStudents} disabled={loading || busy}>
+            월별 학생 엑셀 내보내기
           </Button>
-          <span style={{ fontSize: 12, color: COLORS.sub }}>검색과 관계없이 전체 재원생 · 일대일 수업시간 기준</span>
+          <span style={{ fontSize: 12, color: COLORS.sub }}>검색과 관계없이 해당 월 재원·퇴원생 포함 · 학기중 수업시간 기준</span>
         </div>
 
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 12, flexWrap: "wrap" }}>
