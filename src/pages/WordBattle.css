@@ -87,3 +87,45 @@ button { cursor: pointer; }
 .wb-display-error { position:fixed; z-index:50; top:20px; left:50%; transform:translateX(-50%); padding:12px 20px; border-radius:12px; background:#b42318; }
 @media (max-width: 950px) { .wb-summary-grid, .wb-team-columns { grid-template-columns:1fr 1fr; } .wb-editor-grid { grid-template-columns:1fr; } }
 @media (max-width: 620px) { .wb-admin { padding:62px 12px 40px; } .wb-admin-header, .wb-card-title { align-items:stretch; flex-direction:column; } .wb-header-actions { display:grid; grid-template-columns:1fr 1fr; } .wb-tabs { width:100%; overflow:auto; } .wb-tabs button { white-space:nowrap; padding:10px; } .wb-summary-grid, .wb-team-columns { grid-template-columns:1fr; } .wb-summary-grid { grid-template-columns:1fr 1fr; } .wb-card { padding:14px; } }
+/* Append this entire file to the END of src/pages/WordBattle.css. */
+.wb-final { position:fixed; inset:0; overflow:auto; background:#302f2b; color:#f5f0e5; font-family:Pretendard,"Noto Sans KR",system-ui,sans-serif; }
+.wb-final-layout { width:100%; min-height:100%; display:grid; grid-template-columns:minmax(0, .95fr) minmax(0, 1.05fr); max-width:2200px; margin:auto; }
+.wb-final-poster { min-width:0; padding:20px; display:flex; align-items:center; justify-content:center; background:#302f2b; }
+.wb-final-poster img { display:block; width:100%; height:calc(100dvh - 40px); object-fit:contain; }
+.wb-final-poster p { text-align:center; line-height:1.8; overflow-wrap:anywhere; }
+.wb-final-records { min-width:0; display:flex; flex-direction:column; justify-content:center; padding:clamp(24px,4vw,80px); background:radial-gradient(ellipse at top right,#fff5d916,transparent 65%),#262923; border-left:1px solid #f7eedc20; }
+.wb-final-eyebrow { color:#d8bd82; font-size:clamp(10px,1vw,18px); font-weight:800; letter-spacing:.18em; }
+.wb-final-header h1 { margin:16px 0 12px; font-size:clamp(30px,3.4vw,74px); line-height:1.2; letter-spacing:-.05em; }
+.wb-final-header h1 em { color:#f0d496; font-style:normal; }
+.wb-final-period { margin:0 0 24px; color:#b9bcb1; font-size:clamp(12px,1.1vw,22px); }
+.wb-final-list { display:grid; gap:clamp(8px,1.3vh,18px); margin-top:8px; }
+.wb-final-team { display:grid; grid-template-columns:auto minmax(0,1fr) auto; gap:clamp(10px,1.3vw,24px); align-items:center; padding:clamp(14px,2vh,28px) clamp(12px,1.7vw,32px); border:1px solid #ffffff20; border-left:5px solid var(--team-color); border-radius:16px; background:#ffffff07; }
+.wb-final-team.is-winner { background:linear-gradient(115deg,#f0d49620,#ffffff07); border-top-color:#dfc17f66; border-right-color:#dfc17f66; border-bottom-color:#dfc17f66; }
+.wb-final-rank { font-size:clamp(12px,1.1vw,22px); color:#c5c7bd; font-weight:800; white-space:nowrap; }
+.wb-final-team.is-winner .wb-final-rank { color:#f0d496; }
+.wb-final-team-name { font-size:clamp(17px,1.8vw,36px); font-weight:850; overflow-wrap:anywhere; }
+.wb-final-count { display:flex; align-items:baseline; gap:6px; white-space:nowrap; }
+.wb-final-count strong { font-size:clamp(24px,2.8vw,60px); letter-spacing:-.055em; line-height:1.15; font-variant-numeric:tabular-nums; }
+.wb-final-count span { color:#c5c7bd; font-size:clamp(11px,1vw,20px); }
+.wb-final-total { margin-top:24px; border-top:1px solid #ffffff25; padding-top:18px; display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:10px; }
+.wb-final-total>span { color:#c5c7bd; font-size:clamp(12px,1.2vw,23px); }
+.wb-final-total b { color:#f0d496; font-size:clamp(24px,2.4vw,48px); font-variant-numeric:tabular-nums; }
+.wb-final-total small { font-size:.48em; }
+.wb-final-footer { margin-top:24px; color:#b9bcb1; font-size:clamp(12px,1.1vw,22px); line-height:1.7; }
+.wb-final-status { padding:28px 0; line-height:1.7; }
+.wb-final-error { position:sticky; top:0; z-index:20; background:#9a302b; color:white; padding:12px 24px; text-align:center; line-height:1.6; }
+.wb-final-fullscreen { position:fixed; top:14px; right:14px; z-index:30; width:44px; height:44px; padding:0; border:1px solid #ffffff50; border-radius:50%; background:#0006; color:white; font-size:24px; opacity:.4; cursor:pointer; }
+.wb-final-fullscreen:hover,.wb-final-fullscreen:focus-visible { opacity:1; }
+@media(max-width:800px) {
+  .wb-final-layout { grid-template-columns:minmax(0,1fr); }
+  .wb-final-poster { padding:16px; }
+  .wb-final-poster img { height:auto; max-height:68dvh; object-fit:contain; }
+  .wb-final-records { padding:28px 20px 40px; border-left:0; border-top:1px solid #f7eedc20; }
+  .wb-final-header h1 { font-size:36px; }
+  .wb-final-team-name { font-size:20px; }
+  .wb-final-count strong { font-size:30px; }
+}
+@media(max-width:380px) {
+  .wb-final-team { grid-template-columns:auto minmax(0,1fr); }
+  .wb-final-count { grid-column:2; }
+}
