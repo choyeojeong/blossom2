@@ -1,5 +1,8 @@
 // src/pages/WordBattleDisplayPage.jsx
 import { useEffect, useState } from "react";
+import { supabase } from "../utils/supabaseClient";
+
+const MONITOR_TABLE = "academy_monitor_content";
 
 const STORAGE_KEY = "blossom-academy-monitor-slides-v1";
 const SLIDE_INTERVAL_MS = 10000;
@@ -115,8 +118,9 @@ function SlideEditor({ slides, initialIndex, onSave, onCancel }) {
     }
   }
 
-  function save(event) {
+  async function save(event) {
     event.preventDefault();
+    if (busy) return;
 
     const missingTitle = draft.findIndex(
       (item) => !item.title.trim() && !item.highlight.trim()
@@ -127,15 +131,14 @@ function SlideEditor({ slides, initialIndex, onSave, onCancel }) {
       return;
     }
 
+    setError("");
+    setBusy(true);
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(draft));
-      onSave(draft, index);
-    } catch (storageError) {
-      setError(
-        storageError.name === "QuotaExceededError"
-          ? "브라우저 저장 공간이 부족합니다. 사진을 줄인 뒤 다시 저장해 주세요."
-          : "브라우저에 저장할 수 없습니다. 브라우저의 사이트 데이터 설정을 확인해 주세요."
-      );
+      await onSave(draft, index);
+    } catch (error) {
+      setError(error.message || "공용 화면을 저장하지 못했습니다.");
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -148,11 +151,11 @@ function SlideEditor({ slides, initialIndex, onSave, onCancel }) {
         aria-modal="true"
         aria-labelledby="monitor-editor-title"
         onKeyDown={(event) => {
-          if (event.key === "Escape") onCancel();
+          if (event.key === "Escape" && !busy) onCancel();
         }}
       >
         <h2 id="monitor-editor-title">학원 모니터 편집</h2>
-        <p>화면을 선택해 수정한 뒤 저장해 주세요. 변경 사항은 이 브라우저에 저장됩니다.</p>
+        <p>화면을 선택해 수정한 뒤 저장해 주세요. 저장한 변경 사항은 모든 학원 모니터에 적용됩니다.</p>
 
         <fieldset disabled={busy}>
           <label>
@@ -232,11 +235,11 @@ function SlideEditor({ slides, initialIndex, onSave, onCancel }) {
           )}
         </fieldset>
 
-        {busy && <p role="status">사진을 준비하는 중입니다.</p>}
+        {busy && <p role="status">처리 중입니다.</p>}
         {error && <p role="alert" className="monitor-error">{error}</p>}
 
         <div className="monitor-editor-actions">
-          <button type="button" onClick={onCancel}>취소</button>
+          <button type="button" onClick={onCancel} disabled={busy}>취소</button>
           <button type="submit" disabled={busy}>저장</button>
         </div>
       </form>
@@ -245,10 +248,63 @@ function SlideEditor({ slides, initialIndex, onSave, onCancel }) {
 }
 
 export default function WordBattleDisplayPage() {
-  const [slides, setSlides] = useState(loadSlides);
+  const [slides, setSlides] = useState(DEFAULT_SLIDES);
   const [activeIndex, setActiveIndex] = useState(0);
   const [editing, setEditing] = useState(false);
+  const [browserCopy] = useState(() => {
+    const saved = loadSlides();
+    return saved === DEFAULT_SLIDES ? null : saved;
+  });
+  const [importing, setImporting] = useState(false);
+  const [revision, setRevision] = useState(null);
+  const [syncError, setSyncError] = useState("");
+
   const slide = slides[activeIndex] ?? slides[0];
+
+  useEffect(() => {
+    if (editing) return;
+
+    let stopped = false;
+    let timer;
+
+    async function refresh() {
+      try {
+        const { data: version, error: versionError } = await supabase
+          .from(MONITOR_TABLE).select("revision").eq("id", 1).single();
+
+        if (versionError) throw versionError;
+        if (stopped) return;
+
+        if (version.revision !== revision) {
+          const { data, error } = await supabase
+            .from(MONITOR_TABLE).select("slides, revision").eq("id", 1).single();
+
+          if (error) throw error;
+          if (stopped) return;
+
+          const nextSlides = data.slides ?? DEFAULT_SLIDES;
+          setSlides(nextSlides);
+          setActiveIndex((current) => Math.min(current, nextSlides.length - 1));
+          setRevision(data.revision);
+        }
+
+        setSyncError("");
+      } catch {
+        if (!stopped) {
+          setSyncError("공용 화면에 연결하지 못했습니다. 잠시 후 다시 확인합니다.");
+        }
+      } finally {
+        if (!stopped) timer = window.setTimeout(refresh, 15000);
+      }
+    }
+
+    refresh();
+
+    return () => {
+      stopped = true;
+      window.clearTimeout(timer);
+    };
+  }, [editing, revision]);
 
   useEffect(() => {
     if (editing || slides.length < 2) return;
@@ -272,7 +328,26 @@ export default function WordBattleDisplayPage() {
     }
   }
 
-  function saveSlides(nextSlides, nextIndex) {
+  async function saveSlides(nextSlides, nextIndex) {
+    const nextRevision = crypto.randomUUID();
+    const { data, error } = await supabase
+      .from(MONITOR_TABLE)
+      .update({ slides: nextSlides, revision: nextRevision })
+      .eq("id", 1)
+      .eq("revision", revision)
+      .select("revision")
+      .maybeSingle();
+
+    if (error) throw new Error(`공용 화면을 저장하지 못했습니다. ${error.message}`);
+    if (!data) {
+      throw new Error(
+        "저장 권한이 없거나 다른 컴퓨터에서 먼저 저장했습니다. " +
+        "편집 내용을 따로 보관한 뒤 다시 로그인하거나 최신 화면을 확인해 주세요."
+      );
+    }
+
+    setRevision(data.revision);
+    setImporting(false);
     setSlides(nextSlides);
     setActiveIndex(nextIndex);
     setEditing(false);
@@ -496,14 +571,40 @@ export default function WordBattleDisplayPage() {
       </div>
 
       <div className="monitor-toolbar">
-        <button type="button" onClick={() => setEditing(true)}>화면 편집</button>
+        {syncError && <span role="status">{syncError}</span>}
+        <button
+          type="button"
+          disabled={!revision || Boolean(syncError)}
+          onClick={() => {
+            setImporting(false);
+            setEditing(true);
+          }}
+        >
+          화면 편집
+        </button>
+        {browserCopy && (
+          <button
+            type="button"
+            disabled={!revision || Boolean(syncError)}
+            onClick={() => {
+              if (!window.confirm(
+                "이 브라우저의 편집본을 불러옵니다. 저장하면 공용 화면이 이 편집본으로 교체됩니다."
+              )) return;
+
+              setImporting(true);
+              setEditing(true);
+            }}
+          >
+            이 브라우저의 화면 가져오기
+          </button>
+        )}
         <button type="button" onClick={toggleFullscreen}>전체화면</button>
       </div>
 
       {editing && (
         <SlideEditor
-          slides={slides}
-          initialIndex={activeIndex}
+          slides={importing ? browserCopy : slides}
+          initialIndex={importing ? 0 : activeIndex}
           onSave={saveSlides}
           onCancel={() => setEditing(false)}
         />
