@@ -30,6 +30,7 @@ export default function DashboardPage() {
       { label: "상담관리", to: "/counseling" },
 
       { label: "단어시험", to: "/word-tests" },
+      { label: "학원 모니터", to: "/monitor" },
     ],
     []
   );
