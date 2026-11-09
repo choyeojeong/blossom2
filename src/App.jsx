@@ -38,9 +38,6 @@ import CounselingPage from "./pages/CounselingPage";
 import CounselingSessionPage from "./pages/CounselingSessionPage";
 
 import WordTestPage from "./pages/WordTestPage";
-
-// 중3 단어대전
-import WordBattlePage from "./pages/WordBattlePage";
 import WordBattleDisplayPage from "./pages/WordBattleDisplayPage";
 
 import { isAuthed } from "./utils/auth";
@@ -58,7 +55,7 @@ function RequireAuth() {
     );
   }
 
-   return <Outlet />;
+  return <Outlet />;
 }
 
 export default function App() {
@@ -70,120 +67,58 @@ export default function App() {
         {/* 공개 페이지 */}
         <Route path="/" element={<LoginPage />} />
 
-        {/* 학생 모니터용 공개 페이지 */}
+        {/* 학원 모니터용 공개 페이지 */}
+        <Route path="/monitor" element={<WordBattleDisplayPage />} />
         <Route
           path="/word-battle/display"
-          element={<WordBattleDisplayPage />}
+          element={<Navigate to="/monitor" replace />}
         />
 
         {/* 로그인 필요 페이지 */}
         <Route element={<RequireAuth />}>
-          <Route
-            path="/dashboard"
-            element={<DashboardPage />}
-          />
+          <Route path="/dashboard" element={<DashboardPage />} />
+          <Route path="/students" element={<StudentsPage />} />
+          <Route path="/students/:studentId" element={<StudentDetailPage />} />
+          <Route path="/settings" element={<SettingsPage />} />
+          <Route path="/lectures" element={<LecturesPage />} />
 
-          <Route
-            path="/students"
-            element={<StudentsPage />}
-          />
-
-          <Route
-            path="/students/:studentId"
-            element={<StudentDetailPage />}
-          />
-
-          <Route
-            path="/settings"
-            element={<SettingsPage />}
-          />
-
-          <Route
-            path="/lectures"
-            element={<LecturesPage />}
-          />
-
-          <Route
-            path="/one-to-one"
-            element={<OneToOneScheduleSelectPage />}
-          />
-
+          <Route path="/one-to-one" element={<OneToOneScheduleSelectPage />} />
           <Route
             path="/one-to-one/:teacherName"
             element={<TeacherOneToOneHubPage />}
           />
-
           <Route
             path="/one-to-one/:teacherName/schedule"
             element={<OneToOneSchedulePage />}
           />
-
           <Route
             path="/one-to-one/:teacherName/todos"
             element={<OneToOneTodosPage />}
           />
 
-          <Route
-            path="/reading"
-            element={<ReadingSchedulePage />}
-          />
+          <Route path="/reading" element={<ReadingSchedulePage />} />
+          <Route path="/kiosk" element={<KioskPage />} />
 
-          <Route
-            path="/kiosk"
-            element={<KioskPage />}
-          />
-
-          <Route
-            path="/grades"
-            element={<GradesHomePage />}
-          />
-
-          <Route
-            path="/grades/students"
-            element={<GradesPage />}
-          />
-
+          <Route path="/grades" element={<GradesHomePage />} />
+          <Route path="/grades/students" element={<GradesPage />} />
           <Route
             path="/grades/students/:studentId"
             element={<StudentGradesPage />}
           />
+          <Route path="/grades/query" element={<ScoreQueryPage />} />
 
-          <Route
-            path="/grades/query"
-            element={<ScoreQueryPage />}
-          />
+          <Route path="/contact-forms" element={<ContactFormsPage />} />
 
-          <Route
-            path="/contact-forms"
-            element={<ContactFormsPage />}
-          />
-
-          <Route
-            path="/counseling"
-            element={<CounselingPage />}
-          />
-
+          <Route path="/counseling" element={<CounselingPage />} />
           <Route
             path="/counseling/:sessionId"
             element={<CounselingSessionPage />}
           />
 
-          <Route
-            path="/word-tests"
-            element={<WordTestPage />}
-          />
-
-          {/* 중3 단어대전 관리자 화면 */}
-          <Route
-            path="/word-battle"
-            element={<WordBattlePage />}
-          />
+          <Route path="/word-tests" element={<WordTestPage />} />
         </Route>
 
-        <Route
-          path="*"
-          element={<Navigate to="/" replace />}
-        />
+        <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </BrowserRouter>
   );

@@ -24,12 +24,11 @@ export default function DashboardPage() {
       { label: "독해시간표", to: "/reading" },
 
       { label: "강의관리", to: "/lectures" },
-      { label: "중3단어대전", to: "/word-battle" },
-
       { label: "학부모연락양식", to: "/contact-forms" },
-      { label: "키오스크", to: "/kiosk" },
 
+      { label: "키오스크", to: "/kiosk" },
       { label: "상담관리", to: "/counseling" },
+
       { label: "단어시험", to: "/word-tests" },
     ],
     []
